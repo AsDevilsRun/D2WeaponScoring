@@ -71,14 +71,14 @@
     <div class="card">
       <h2>Settings</h2>
       <div class="settings">
-        <label for="tieredUrl">Tiered Weapons CSV</label>
-        <input type="text" id="tieredUrl" placeholder="File → Share → Publish to web → Tiered Weapons → CSV, then paste the link">
+        <label for="tieredUrl">Tiered Weapons CSV <span class="muted">(optional)</span></label>
+        <input type="text" id="tieredUrl" placeholder="Leave empty to use the built-in tier list">
         <label for="dimKey">DIM API key <span class="muted">(optional)</span></label>
         <input type="text" id="dimKey" placeholder="Only needed to tag junk in DIM directly">
       </div>
       <div class="rules">
         <label><input type="checkbox" id="optUnlisted" checked> Weapons not on the Tiered list are junk</label>
-        <label><input type="checkbox" id="optCrafted"> Never mark crafted weapons as junk</label>
+        <label><input type="checkbox" id="optCrafted" checked> Never mark crafted weapons as junk</label>
         <label><input type="checkbox" id="optLocked"> Never mark locked weapons as junk</label>
       </div>
     </div>
@@ -99,7 +99,7 @@
         <input type="text" id="filter" class="filter" placeholder="Filter by name">
       </div>
       <table>
-        <thead><tr><th></th><th data-sort="name">Weapon</th><th data-sort="score" class="num">Score</th><th data-sort="best" class="num">Best copy</th><th>Matched perks</th><th data-sort="where">Location</th></tr></thead>
+        <thead><tr><th></th><th data-sort="name">Weapon</th><th>Wanted perks</th><th data-sort="where">Location</th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -120,6 +120,8 @@ const CONFIG = {
   clientId: "56678",
 };
 const DIM_API = "https://api.destinyitemmanager.com";
+/* Your Tiered Weapons tab, published to the web as CSV. Used unless a different link is entered in Settings. */
+const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
@@ -281,8 +283,7 @@ function parseCSV(text) {
    Points, as in your sheet: Priority 1 = 25, Priority 2 = 20, then the filled Priorities 3–11 in order get 9, 8, 7, …
    Max = 90 − (9 − n)(10 − n)/2, where n is how many of Priorities 3–11 are filled. */
 async function loadTiered() {
-  const url = $("tieredUrl").value.trim();
-  if (!url) throw new Error("Paste your published Tiered Weapons CSV link in Settings first.");
+  const url = $("tieredUrl").value.trim() || TIERED_CSV;
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 15000);
   let text;
@@ -341,10 +342,27 @@ function score(weapons, tiers) {
   for (const w of weapons) {
     w.best = best[key(w)] ?? null;
     let junk = w.score == null ? opt.unlisted : w.score < w.best;
-    w.why = w.score == null ? "not on the Tiered list" : (w.score < w.best ? `best copy scores ${w.best}` : "best copy");
+    w.why = w.score == null ? "not on the Tiered list" : (w.score < w.best ? "a better copy exists" : "best copy");
     if (junk && opt.crafted && w.crafted) { junk = false; w.why += " · kept: crafted"; }
     if (junk && opt.locked && w.locked) { junk = false; w.why += " · kept: locked"; }
     w.junk = junk;
+  }
+  // Duplicates: best copies with exactly the same scored perks keep only one — the oldest (lowest item ID).
+  const groups = {};
+  for (const w of weapons) {
+    if (w.junk || w.score == null || w.score !== w.best) continue;
+    const sig = key(w) + "|" + w.matched.map(m => norm(m.perk)).sort().join(",");
+    (groups[sig] ||= []).push(w);
+  }
+  for (const g of Object.values(groups)) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
+    const keep = g[0];
+    keep.why += ` · kept over ${g.length - 1} duplicate${g.length > 2 ? "s" : ""}`;
+    for (const w of g.slice(1)) {
+      w.junk = !(opt.crafted && w.crafted) && !(opt.locked && w.locked);
+      w.why = "duplicate of an older copy with the same perks" + (w.junk ? "" : ` · kept: ${opt.crafted && w.crafted ? "crafted" : "locked"}`);
+    }
   }
   return weapons;
 }
@@ -388,14 +406,11 @@ function render() {
     sub.className = w.junk ? "bad" : "muted";
     sub.textContent = (w.junk ? "Junk — " : "") + w.why;
     tdN.append(sub);
-    const tdS = document.createElement("td"); tdS.className = "num";
-    tdS.textContent = w.score == null ? "—" : `${w.score} / ${w.tier.max}`;
-    const tdB = document.createElement("td"); tdB.className = "num"; tdB.textContent = w.best ?? "—";
     const tdP = document.createElement("td"); tdP.className = "perks";
-    tdP.textContent = w.matched.map(m => `${m.perk} (${m.v})`).join(", ");
+    tdP.textContent = w.matched.map(m => m.perk).join(", ");
     tdP.title = "All perks on this copy: " + [...w.perks].join(", ");
     const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = w.where;
-    tr.append(tdI, tdN, tdS, tdB, tdP, tdW);
+    tr.append(tdI, tdN, tdP, tdW);
     tb.append(tr);
   }
 }
@@ -497,7 +512,7 @@ function wire() {
     if (saved != null) $(id).checked = saved;
     $(id).onchange = () => { store.set("d2v_" + id, $(id).checked); if (state.results.length) { score(state.results, Object.fromEntries(state.results.filter(w => w.rows).map(w => [norm(baseName(w.def.name)), w.rows]))); render(); } };
   }
-  $("tieredUrl").value = store.get("d2v_tiered_url") || "";
+  $("tieredUrl").value = store.get("d2v_tiered_url") === TIERED_CSV ? "" : (store.get("d2v_tiered_url") || "");
   $("dimKey").value = store.get("d2v_dim_key") || "";
 }
 
@@ -511,8 +526,7 @@ async function init() {
   $("app").hidden = false;
   await busy(async () => {
     await loadMembership();
-    if ($("tieredUrl").value.trim()) await scan();
-    else log("Paste your published Tiered Weapons CSV link in Settings, then Scan vault.");
+    await scan();
   });
 }
 
