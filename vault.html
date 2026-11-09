@@ -116,8 +116,8 @@
    Your own Bungie app (bungie.net/en/Application): OAuth client type Public, redirect URL = this page's address,
    origin header = this site's origin, scope "Read your Destiny 2 information". */
 const CONFIG = {
-  apiKey:   "21b8ffe314f04303b42c3e01c0897a3d",
-  clientId: "56678",
+  apiKey:   "PASTE_YOUR_API_KEY",
+  clientId: "PASTE_YOUR_CLIENT_ID",
 };
 const DIM_API = "https://api.destinyitemmanager.com";
 
@@ -212,7 +212,8 @@ async function loadDefs() {
   const raw = await (await fetch(BUNGIE + man.jsonWorldComponentContentPaths.en.DestinyInventoryItemLiteDefinition)).json();
   const defs = {}, plugs = {};
   for (const [h, d] of Object.entries(raw)) {
-    if (d.plug) plugs[h] = d.displayProperties?.name || "";
+    // Every item's name: perks are items too, and the light item list doesn't always include their plug details.
+    if (d.displayProperties?.name) plugs[h] = d.displayProperties.name;
     if (d.itemType === ITEMTYPE_WEAPON && d.inventory) {
       defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "" };
     }
@@ -252,6 +253,9 @@ async function loadWeapons() {
   for (const it of r.profileInventory?.data?.items || []) add(it, "Vault");
   for (const [cid, inv] of Object.entries(r.characterInventories?.data || {})) for (const it of inv.items) add(it, CLASS_NAME[chars[cid]?.classType] || "Character");
   for (const [cid, inv] of Object.entries(r.characterEquipment?.data || {})) for (const it of inv.items) add(it, (CLASS_NAME[chars[cid]?.classType] || "Character") + " (equipped)");
+  const withSockets = out.filter(w => sockets[w.id]).length;
+  const withOptions = out.filter(w => reusable[w.id]).length;
+  log(`Perks: sockets for ${withSockets} of ${out.length} weapons, perk options for ${withOptions}; ${out.filter(w => w.perks.size).length} have named perks.`);
   return out;
 }
 
@@ -389,6 +393,7 @@ function render() {
     const tdB = document.createElement("td"); tdB.className = "num"; tdB.textContent = w.best ?? "—";
     const tdP = document.createElement("td"); tdP.className = "perks";
     tdP.textContent = w.matched.map(m => `${m.perk} (${m.v})`).join(", ");
+    tdP.title = "All perks on this copy: " + [...w.perks].join(", ");
     const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = w.where;
     tr.append(tdI, tdN, tdS, tdB, tdP, tdW);
     tb.append(tr);
@@ -492,7 +497,7 @@ function wire() {
     if (saved != null) $(id).checked = saved;
     $(id).onchange = () => { store.set("d2v_" + id, $(id).checked); if (state.results.length) { score(state.results, Object.fromEntries(state.results.filter(w => w.rows).map(w => [norm(baseName(w.def.name)), w.rows]))); render(); } };
   }
-  $("tieredUrl").value = store.get("d2v_tiered_url") || "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
+  $("tieredUrl").value = store.get("d2v_tiered_url") || "";
   $("dimKey").value = store.get("d2v_dim_key") || "";
 }
 
