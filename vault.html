@@ -492,7 +492,7 @@ function wire() {
     if (saved != null) $(id).checked = saved;
     $(id).onchange = () => { store.set("d2v_" + id, $(id).checked); if (state.results.length) { score(state.results, Object.fromEntries(state.results.filter(w => w.rows).map(w => [norm(baseName(w.def.name)), w.rows]))); render(); } };
   }
-  $("tieredUrl").value = store.get("d2v_tiered_url") || "";
+  $("tieredUrl").value = store.get("d2v_tiered_url") || "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
   $("dimKey").value = store.get("d2v_dim_key") || "";
 }
 
