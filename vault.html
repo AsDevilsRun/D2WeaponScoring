@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D2 Vault Cleaner</title>
+<style>
+  :root { --bg:#14161a; --card:#1d2026; --line:#2c3038; --text:#e6e6e6; --dim:#9aa0aa; --accent:#d9b44a; --bad:#e06c6c; --good:#6cc28a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; justify-content:space-between; align-items:center; padding:12px 20px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; }
+  h2 { font-size:14px; margin:0 0 8px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
+  main { max-width:1200px; margin:0 auto; padding:16px 20px 40px; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; }
+  button, input[type=text] { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 12px; font:inherit; }
+  button { cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:var(--accent); color:#111; border-color:var(--accent); font-weight:600; }
+  button.small { padding:3px 9px; font-size:12px; }
+  input[type=text] { width:100%; background:var(--bg); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:14px; }
+  .muted { color:var(--dim); }
+  .bad { color:var(--bad); }
+  .good { color:var(--good); }
+  .intro { margin:0 0 14px; color:var(--dim); }
+  .settings { display:grid; grid-template-columns:auto 1fr; gap:8px 12px; align-items:center; }
+  .rules { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:10px; }
+  .rules label { cursor:pointer; }
+  .stats { display:flex; flex-wrap:wrap; gap:8px 24px; margin-bottom:8px; }
+  .stats b { font-size:18px; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; color:var(--dim); font-weight:600; padding:4px 6px; border-bottom:1px solid var(--line); cursor:pointer; white-space:nowrap; }
+  td { padding:5px 6px; border-top:1px solid var(--line); vertical-align:top; }
+  td img { width:32px; height:32px; display:block; border-radius:3px; }
+  td.num { text-align:right; white-space:nowrap; }
+  .perks { font-size:12px; color:var(--dim); }
+  .tag { display:inline-block; font-size:11px; padding:0 6px; border-radius:9px; border:1px solid var(--line); margin-left:6px; }
+  textarea { width:100%; min-height:70px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px; font:12px ui-monospace, monospace; resize:vertical; }
+  #log { white-space:pre-wrap; font:12px ui-monospace, monospace; color:var(--dim); max-height:200px; overflow:auto; }
+  .tabs { display:flex; gap:6px; margin-bottom:8px; }
+  .tabs button.on { border-color:var(--accent); color:var(--accent); }
+  .filter { max-width:260px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>D2 Vault Cleaner</h1>
+  <span id="account" class="muted"></span>
+</header>
+<main>
+  <p class="intro">Scores every legendary weapon you own against your Tiered Weapons tab and lists the copies that are junk. Same rules as your Scores tab: a copy is junk if another copy of that weapon scores higher, or if the weapon isn't on your list.</p>
+
+  <section id="setup" class="card" hidden>
+    <h2>Setup</h2>
+    <p>This page needs its own Bungie app. At <a href="https://www.bungie.net/en/Application" style="color:var(--accent)">bungie.net/en/Application</a>, create one with OAuth client type <b>Public</b>, the redirect URL set to this page's address, the origin header set to this site's origin, and the scope <b>Read your Destiny 2 information</b>. Then put its API key and OAuth client ID in <code>CONFIG</code> at the top of the script.</p>
+  </section>
+
+  <section id="signin" class="card" hidden>
+    <p>Sign in with Bungie to read your inventory.</p>
+    <button id="btnSignIn" class="primary">Sign in with Bungie</button>
+  </section>
+
+  <section id="app" hidden>
+    <div class="controls">
+      <button id="btnScan" class="primary">Scan vault</button>
+      <button id="btnSignOut">Sign out</button>
+    </div>
+
+    <div class="card">
+      <h2>Settings</h2>
+      <div class="settings">
+        <label for="tieredUrl">Tiered Weapons CSV</label>
+        <input type="text" id="tieredUrl" placeholder="File → Share → Publish to web → Tiered Weapons → CSV, then paste the link">
+        <label for="dimKey">DIM API key <span class="muted">(optional)</span></label>
+        <input type="text" id="dimKey" placeholder="Only needed to tag junk in DIM directly">
+      </div>
+      <div class="rules">
+        <label><input type="checkbox" id="optUnlisted" checked> Weapons not on the Tiered list are junk</label>
+        <label><input type="checkbox" id="optCrafted"> Never mark crafted weapons as junk</label>
+        <label><input type="checkbox" id="optLocked"> Never mark locked weapons as junk</label>
+      </div>
+    </div>
+
+    <div class="card" id="results" hidden>
+      <h2>Results</h2>
+      <div class="stats" id="stats"></div>
+      <div class="controls">
+        <button id="btnCopy" class="small">Copy DIM search</button>
+        <button id="btnTagDim" class="small" hidden>Tag junk in DIM</button>
+        <span id="dimStatus" class="muted"></span>
+      </div>
+      <textarea id="dimQuery" readonly></textarea>
+      <div class="tabs" style="margin-top:12px">
+        <button id="tabJunk" class="small on">Junk</button>
+        <button id="tabKeep" class="small">Keeping</button>
+        <button id="tabAll" class="small">All</button>
+        <input type="text" id="filter" class="filter" placeholder="Filter by name">
+      </div>
+      <table>
+        <thead><tr><th></th><th data-sort="name">Weapon</th><th data-sort="score" class="num">Score</th><th data-sort="best" class="num">Best copy</th><th>Matched perks</th><th data-sort="where">Location</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Log</h2>
+      <div id="log"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ---------- config ----------
+   Your own Bungie app (bungie.net/en/Application): OAuth client type Public, redirect URL = this page's address,
+   origin header = this site's origin, scope "Read your Destiny 2 information". */
+const CONFIG = {
+  apiKey:   "PASTE_YOUR_API_KEY",
+  clientId: "PASTE_YOUR_CLIENT_ID",
+};
+const DIM_API = "https://api.destinyitemmanager.com";
+
+const BUNGIE = "https://www.bungie.net";
+const API = BUNGIE + "/Platform";
+const ITEMTYPE_WEAPON = 3;
+const TIER_LEGENDARY = 5;
+const VAULT = "vault";
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const norm = s => String(s).toLowerCase().replace(/[‘’`]/g, "'").replace(/\s+/g, " ").trim();
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+  del(k) { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } },
+};
+function log(msg) {
+  const el = $("log");
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el.textContent;
+}
+
+const state = { token: null, membership: null, bnetId: null, defs: null, plugNames: null, results: [], view: "junk", sort: { key: "name", dir: 1 }, dimTags: null };
+
+/* ---------- Bungie ---------- */
+async function bungie(path) {
+  const headers = { "X-API-Key": CONFIG.apiKey };
+  if (state.token) headers.Authorization = "Bearer " + state.token.access;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(API + path, { headers });
+    if (res.status === 401) { signOut(false); throw new Error("Session expired. Sign in again."); }
+    let json;
+    try { json = await res.json(); } catch { throw new Error(`HTTP ${res.status} from ${path}`); }
+    if (json.ErrorCode === 1) return json.Response;
+    if (json.ErrorStatus === "WebAuthRequired" || json.ErrorCode === 99) { signOut(false); throw new Error("Session expired. Sign in again."); }
+    if (json.ThrottleSeconds > 0) { await sleep(json.ThrottleSeconds * 1000); continue; }
+    throw new Error(`${json.ErrorStatus}: ${json.Message}`);
+  }
+  throw new Error("Bungie is throttling requests. Wait a moment and retry.");
+}
+
+function signIn() {
+  const st = Array.from(crypto.getRandomValues(new Uint32Array(4))).join("-");
+  store.set("d2v_oauth_state", st);
+  location.href = `${BUNGIE}/en/OAuth/Authorize?client_id=${encodeURIComponent(CONFIG.clientId)}&response_type=code&state=${encodeURIComponent(st)}`;
+}
+function signOut(reload = true) {
+  store.del("d2v_token");
+  state.token = null;
+  if (reload) location.reload();
+}
+
+/* Bungie sends you back here with ?code=…; trade it for an access token (public clients get one hour, no refresh token). */
+async function handleRedirect() {
+  const p = new URLSearchParams(location.search);
+  const code = p.get("code");
+  if (!code) return;
+  const st = p.get("state");
+  history.replaceState(null, "", location.pathname);
+  const expected = store.get("d2v_oauth_state");
+  store.del("d2v_oauth_state");
+  if (!expected || st !== expected) throw new Error("Sign-in state mismatch. Sign in again.");
+  const res = await fetch(API + "/App/OAuth/Token/", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "authorization_code", code, client_id: CONFIG.clientId }),
+  });
+  let j = {};
+  try { j = await res.json(); } catch { /* handled below */ }
+  if (!j.access_token) throw new Error("Token exchange failed: " + (j.error_description || j.error || `HTTP ${res.status}`));
+  state.token = { access: j.access_token, expires: Date.now() + (j.expires_in - 60) * 1000 };
+  store.set("d2v_token", state.token);
+}
+
+async function loadMembership() {
+  const r = await bungie("/User/GetMembershipsForCurrentUser/");
+  const ms = r.destinyMemberships || [];
+  if (!ms.length) throw new Error("No Destiny account on this Bungie profile.");
+  const m = ms.find(x => x.membershipId === r.primaryMembershipId)
+         || ms.find(x => x.crossSaveOverride === 0 || x.crossSaveOverride === x.membershipType)
+         || ms[0];
+  state.membership = { type: m.membershipType, id: m.membershipId, name: m.bungieGlobalDisplayName || m.displayName };
+  state.bnetId = r.bungieNetUser?.membershipId || null;
+  $("account").textContent = state.membership.name;
+}
+
+/* Item names (weapons) and plug names, from Bungie's item list. Downloaded once per session. */
+async function loadDefs() {
+  if (state.defs) return;
+  const man = await bungie("/Destiny2/Manifest/");
+  log("Downloading item definitions…");
+  const raw = await (await fetch(BUNGIE + man.jsonWorldComponentContentPaths.en.DestinyInventoryItemLiteDefinition)).json();
+  const defs = {}, plugs = {};
+  for (const [h, d] of Object.entries(raw)) {
+    if (d.plug) plugs[h] = d.displayProperties?.name || "";
+    if (d.itemType === ITEMTYPE_WEAPON && d.inventory) {
+      defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "" };
+    }
+  }
+  state.defs = defs;
+  state.plugNames = plugs;
+  log(`Definitions loaded (${Object.keys(defs).length} weapons).`);
+}
+
+/* Every weapon you own, with every perk option it has (selected or not), like DIM's CSV export. */
+async function loadWeapons() {
+  const m = state.membership;
+  const r = await bungie(`/Destiny2/${m.type}/Profile/${m.id}/?components=102,200,201,205,300,305,310`);
+  const chars = r.characters?.data || {};
+  const CLASS_NAME = { 0: "Titan", 1: "Hunter", 2: "Warlock" };
+  const instances = r.itemComponents?.instances?.data || {};
+  const sockets = r.itemComponents?.sockets?.data || {};
+  const reusable = r.itemComponents?.reusablePlugs?.data || {};
+  const out = [];
+  const add = (it, where) => {
+    const def = state.defs[it.itemHash];
+    if (!def || !it.itemInstanceId || def.tier !== TIER_LEGENDARY) return;
+    const names = new Set();
+    (sockets[it.itemInstanceId]?.sockets || []).forEach((s, idx) => {
+      if (s.plugHash) names.add(state.plugNames[s.plugHash] || "");
+      for (const p of reusable[it.itemInstanceId]?.plugs?.[idx] || []) names.add(state.plugNames[p.plugItemHash] || "");
+    });
+    names.delete("");
+    out.push({
+      id: it.itemInstanceId, hash: it.itemHash, def, where,
+      perks: names,
+      locked: (it.state & 1) === 1,
+      crafted: (it.state & 8) === 8,
+      power: instances[it.itemInstanceId]?.primaryStat?.value || 0,
+    });
+  };
+  for (const it of r.profileInventory?.data?.items || []) add(it, "Vault");
+  for (const [cid, inv] of Object.entries(r.characterInventories?.data || {})) for (const it of inv.items) add(it, CLASS_NAME[chars[cid]?.classType] || "Character");
+  for (const [cid, inv] of Object.entries(r.characterEquipment?.data || {})) for (const it of inv.items) add(it, (CLASS_NAME[chars[cid]?.classType] || "Character") + " (equipped)");
+  return out;
+}
+
+/* ---------- Tiered Weapons ---------- */
+function parseCSV(text) {
+  const rows = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+/* A weapon can have several rows (different roll targets); a copy scores against each and keeps its best, as your Scores tab does.
+   Points, as in your sheet: Priority 1 = 25, Priority 2 = 20, then the filled Priorities 3–11 in order get 9, 8, 7, …
+   Max = 90 − (9 − n)(10 − n)/2, where n is how many of Priorities 3–11 are filled. */
+async function loadTiered() {
+  const url = $("tieredUrl").value.trim();
+  if (!url) throw new Error("Paste your published Tiered Weapons CSV link in Settings first.");
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  let text;
+  try { text = await (await fetch(url, { signal: ctl.signal, cache: "no-store" })).text(); }
+  finally { clearTimeout(timer); }
+  const rows = parseCSV(text);
+  const head = (rows[0] || []).map(norm);
+  const col = name => head.indexOf(norm(name));
+  const wi = col("Weapon");
+  const pi = Array.from({ length: 11 }, (_, k) => col("Priority " + (k + 1)));
+  if (wi < 0 || pi.some(i => i < 0)) throw new Error("That CSV doesn't have Weapon and Priority 1–11 columns. Publish the Tiered Weapons tab.");
+  const tiers = {};
+  for (const r of rows.slice(1)) {
+    const name = (r[wi] || "").trim();
+    if (!name) continue;
+    const pts = new Map();
+    const p = k => (r[pi[k]] || "").trim();
+    if (p(0)) pts.set(norm(p(0)), { perk: p(0), v: 25 });
+    if (p(1) && !pts.has(norm(p(1)))) pts.set(norm(p(1)), { perk: p(1), v: 20 });
+    let v = 9, n = 0;
+    for (let k = 2; k < 11; k++) {
+      if (!p(k)) continue;
+      n++;
+      if (!pts.has(norm(p(k)))) pts.set(norm(p(k)), { perk: p(k), v });
+      v--;
+    }
+    (tiers[norm(name)] ||= []).push({ name, pts, max: 90 - (9 - n) * (10 - n) / 2 });
+  }
+  log(`Tiered Weapons loaded (${Object.keys(tiers).length} weapons).`);
+  return tiers;
+}
+
+/* ---------- scoring ---------- */
+/* Adept, Timelost and Harrowed copies count as the same weapon as the base version (as in your sheet). */
+const baseName = n => String(n).replace(/\s*\((adept|timelost|harrowed|baroque)\)\s*$/i, "").trim();
+function score(weapons, tiers) {
+  const opt = { unlisted: $("optUnlisted").checked, crafted: $("optCrafted").checked, locked: $("optLocked").checked };
+  for (const w of weapons) {
+    const rows = tiers[norm(baseName(w.def.name))];
+    w.rows = rows || null;
+    w.tier = null;
+    w.matched = [];
+    w.score = null;
+    if (!rows) continue;
+    const have = new Set([...w.perks].map(norm));
+    for (const t of rows) {
+      const matched = [];
+      for (const [k, { perk, v }] of t.pts) if (have.has(k)) matched.push({ perk, v });
+      const sc = matched.reduce((sum, m) => sum + m.v, 0);
+      if (w.score == null || sc > w.score) { w.score = sc; w.tier = t; w.matched = matched.sort((a, b) => b.v - a.v); }
+    }
+  }
+  const best = {};
+  const key = w => norm(baseName(w.def.name));
+  for (const w of weapons) if (w.score != null) best[key(w)] = Math.max(best[key(w)] ?? -1, w.score);
+  for (const w of weapons) {
+    w.best = best[key(w)] ?? null;
+    let junk = w.score == null ? opt.unlisted : w.score < w.best;
+    w.why = w.score == null ? "not on the Tiered list" : (w.score < w.best ? `best copy scores ${w.best}` : "best copy");
+    if (junk && opt.crafted && w.crafted) { junk = false; w.why += " · kept: crafted"; }
+    if (junk && opt.locked && w.locked) { junk = false; w.why += " · kept: locked"; }
+    w.junk = junk;
+  }
+  return weapons;
+}
+
+/* ---------- rendering ---------- */
+function render() {
+  const all = state.results;
+  const junk = all.filter(w => w.junk);
+  const dimTag = id => state.dimTags?.get(id);
+  $("results").hidden = false;
+  const stats = [
+    ["Legendary weapons", all.length],
+    ["Junk", junk.length],
+    ["Below best copy", junk.filter(w => w.score != null).length],
+    ["Not on list", junk.filter(w => w.score == null).length],
+  ];
+  if (state.dimTags) stats.push(["Junk tagged keep in DIM (skipped)", junk.filter(w => dimTag(w.id) === "keep").length]);
+  $("stats").innerHTML = "";
+  for (const [k, v] of stats) { const d = document.createElement("div"); d.innerHTML = `<b>${v}</b> <span class="muted">${k}</span>`; $("stats").append(d); }
+  $("dimQuery").value = junk.length ? `-tag:keep (${junk.map(w => "id:" + w.id).join(" OR ")})` : "";
+
+  const f = norm($("filter").value || "");
+  let rows = state.view === "junk" ? junk : state.view === "keep" ? all.filter(w => !w.junk) : all;
+  if (f) rows = rows.filter(w => norm(w.def.name).includes(f));
+  const { key, dir } = state.sort;
+  const val = w => key === "name" ? w.def.name : key === "score" ? (w.score ?? -1) : key === "best" ? (w.best ?? -1) : w.where;
+  rows = rows.slice().sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : (b.score ?? -1) - (a.score ?? -1)) * dir);
+
+  const tb = $("rows");
+  tb.innerHTML = "";
+  for (const w of rows) {
+    const tr = document.createElement("tr");
+    const tdI = document.createElement("td");
+    if (w.def.icon) { const img = document.createElement("img"); img.src = BUNGIE + w.def.icon; img.alt = ""; tdI.append(img); }
+    const tdN = document.createElement("td");
+    tdN.textContent = w.def.name;
+    if (w.crafted) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "crafted" }));
+    if (w.locked) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "locked" }));
+    if (dimTag(w.id)) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "DIM: " + dimTag(w.id) }));
+    const sub = document.createElement("div");
+    sub.className = w.junk ? "bad" : "muted";
+    sub.textContent = (w.junk ? "Junk — " : "") + w.why;
+    tdN.append(sub);
+    const tdS = document.createElement("td"); tdS.className = "num";
+    tdS.textContent = w.score == null ? "—" : `${w.score} / ${w.tier.max}`;
+    const tdB = document.createElement("td"); tdB.className = "num"; tdB.textContent = w.best ?? "—";
+    const tdP = document.createElement("td"); tdP.className = "perks";
+    tdP.textContent = w.matched.map(m => `${m.perk} (${m.v})`).join(", ");
+    const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = w.where;
+    tr.append(tdI, tdN, tdS, tdB, tdP, tdW);
+    tb.append(tr);
+  }
+}
+
+/* ---------- DIM Sync (optional) ----------
+   Needs a DIM API key registered for this page's origin (localhost keys only work when the page is served from localhost). */
+async function dimFetch(path, opts = {}) {
+  const key = $("dimKey").value.trim();
+  if (!state.dimToken || state.dimToken.expires < Date.now()) {
+    const res = await fetch(DIM_API + "/auth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": key },
+      body: JSON.stringify({ bungieAccessToken: state.token.access, membershipId: state.bnetId }),
+    });
+    if (!res.ok) throw new Error(`DIM sign-in failed (HTTP ${res.status}). Check the DIM API key and that it's registered for ${location.origin}.`);
+    const t = await res.json();
+    state.dimToken = { token: t.accessToken, expires: Date.now() + (t.expiresInSeconds - 60) * 1000 };
+  }
+  const res = await fetch(DIM_API + path, {
+    ...opts,
+    headers: { "Content-Type": "application/json", "X-API-Key": key, Authorization: "Bearer " + state.dimToken.token },
+  });
+  if (!res.ok) throw new Error(`DIM API error (HTTP ${res.status}) on ${path}`);
+  return res.json();
+}
+
+async function loadDimTags() {
+  const r = await dimFetch(`/profile?platformMembershipId=${state.membership.id}&destinyVersion=2&components=tags`);
+  state.dimTags = new Map((r.tags || []).filter(t => t.tag).map(t => [t.id, t.tag]));
+  log(`DIM tags loaded (${state.dimTags.size} tagged items).`);
+}
+
+async function tagJunkInDim() {
+  await loadDimTags();
+  const todo = state.results.filter(w => w.junk && !["keep", "favorite", "junk"].includes(state.dimTags.get(w.id)));
+  const skipped = state.results.filter(w => w.junk && ["keep", "favorite"].includes(state.dimTags.get(w.id))).length;
+  if (!todo.length) { log(`Nothing to tag (${skipped} junk weapons are tagged keep or favorite in DIM and were skipped).`); render(); return; }
+  if (!confirm(`Tag ${todo.length} weapons as junk in DIM?${skipped ? ` (${skipped} tagged keep/favorite will be skipped.)` : ""}`)) return;
+  for (let i = 0; i < todo.length; i += 50) {
+    const batch = todo.slice(i, i + 50);
+    await dimFetch("/profile", {
+      method: "POST",
+      body: JSON.stringify({
+        platformMembershipId: state.membership.id, destinyVersion: 2,
+        updates: batch.map(w => ({ action: "tag", payload: { id: w.id, tag: "junk" } })),
+      }),
+    });
+    for (const w of batch) state.dimTags.set(w.id, "junk");
+    $("dimStatus").textContent = `Tagged ${Math.min(i + 50, todo.length)} / ${todo.length}`;
+  }
+  log(`Tagged ${todo.length} weapons as junk in DIM. Reload DIM (or wait for it to sync) to see them.`);
+  render();
+}
+
+/* ---------- wiring ---------- */
+const BUSY = ["btnScan", "btnTagDim", "btnCopy"];
+async function busy(fn) {
+  for (const id of BUSY) $(id).disabled = true;
+  try { await fn(); } catch (e) { log("Error: " + e.message); }
+  finally { for (const id of BUSY) $(id).disabled = false; }
+}
+
+async function scan() {
+  store.set("d2v_tiered_url", $("tieredUrl").value.trim());
+  store.set("d2v_dim_key", $("dimKey").value.trim());
+  const tiers = await loadTiered();
+  await loadDefs();
+  log("Reading your weapons…");
+  const weapons = await loadWeapons();
+  state.results = score(weapons, tiers);
+  if ($("dimKey").value.trim()) {
+    try { await loadDimTags(); } catch (e) { log(e.message); state.dimTags = null; }
+  }
+  $("btnTagDim").hidden = !$("dimKey").value.trim();
+  log(`Scored ${weapons.length} legendary weapons; ${weapons.filter(w => w.junk).length} junk.`);
+  render();
+}
+
+function wire() {
+  $("btnSignIn").onclick = signIn;
+  $("btnSignOut").onclick = () => signOut(true);
+  $("btnScan").onclick = () => busy(scan);
+  $("btnTagDim").onclick = () => busy(tagJunkInDim);
+  $("btnCopy").onclick = async () => {
+    try { await navigator.clipboard.writeText($("dimQuery").value); log("DIM search copied."); }
+    catch { $("dimQuery").select(); log("Clipboard blocked; text selected for manual copy."); }
+  };
+  for (const [id, v] of [["tabJunk", "junk"], ["tabKeep", "keep"], ["tabAll", "all"]]) {
+    $(id).onclick = () => { state.view = v; for (const b of ["tabJunk", "tabKeep", "tabAll"]) $(b).classList.toggle("on", b === id); render(); };
+  }
+  $("filter").oninput = () => render();
+  for (const th of document.querySelectorAll("th[data-sort]")) th.onclick = () => {
+    const k = th.dataset.sort;
+    state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : 1 };
+    render();
+  };
+  for (const id of ["optUnlisted", "optCrafted", "optLocked"]) {
+    const saved = store.get("d2v_" + id);
+    if (saved != null) $(id).checked = saved;
+    $(id).onchange = () => { store.set("d2v_" + id, $(id).checked); if (state.results.length) { score(state.results, Object.fromEntries(state.results.filter(w => w.rows).map(w => [norm(baseName(w.def.name)), w.rows]))); render(); } };
+  }
+  $("tieredUrl").value = store.get("d2v_tiered_url") || "";
+  $("dimKey").value = store.get("d2v_dim_key") || "";
+}
+
+async function init() {
+  wire();
+  if (!CONFIG.apiKey || CONFIG.apiKey.startsWith("PASTE") || !CONFIG.clientId || CONFIG.clientId.startsWith("PASTE")) { $("setup").hidden = false; return; }
+  try { await handleRedirect(); } catch (e) { $("app").hidden = false; log("Error: " + e.message); }
+  const t = store.get("d2v_token");
+  if (t && t.expires > Date.now()) state.token = t;
+  if (!state.token) { $("signin").hidden = false; return; }
+  $("app").hidden = false;
+  await busy(async () => {
+    await loadMembership();
+    if ($("tieredUrl").value.trim()) await scan();
+    else log("Paste your published Tiered Weapons CSV link in Settings, then Scan vault.");
+  });
+}
+
+init();
+</script>
+</body>
+</html>
