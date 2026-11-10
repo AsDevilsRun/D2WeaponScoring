@@ -132,7 +132,7 @@
 <body>
 <header>
   <h1>D2 Vault Cleaner <span class="muted" style="font-size:13px;font-weight:400">dev</span></h1>
-  <span id="account" class="muted"></span>
+  <span><span id="account" class="muted"></span> <span id="build" class="muted" style="font-size:11px;margin-left:10px"></span></span>
 </header>
 <main>
   <p class="intro">Checks your legendary weapons and armor against your lists and finds the junk. Weapons: a copy is junk if a better copy exists or the weapon isn't on your list. Armor: for each set on your list, the best 5 pieces are kept; everything else is junk.</p>
@@ -311,6 +311,8 @@ const CONFIG = {
 /* Your weapon list (Weapon, Priority 1–11), published to the web as CSV. Used unless a different link is entered in Settings. */
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
+/* Bump this with every change, so you can tell which version the browser is running. */
+const BUILD = "2026-11-10 15:58";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -1810,6 +1812,7 @@ function wire() {
 }
 
 async function init() {
+  $("build").textContent = "build " + BUILD;
   wire();
   if (!CONFIG.apiKey || CONFIG.apiKey.startsWith("PASTE")) { $("setup").hidden = false; return; }
   $("app").hidden = false;
