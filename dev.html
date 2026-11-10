@@ -46,6 +46,9 @@
   .edhead { display:flex; align-items:center; gap:14px; margin:4px 0 14px; }
   .edhead img { width:72px; height:72px; border-radius:4px; border:1px solid var(--line); }
   .edhead .nm { font-size:22px; font-weight:700; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:3px 9px; border:1px solid var(--line); border-radius:6px; background:var(--bg); }
+  .chip i { width:9px; height:9px; border-radius:50%; display:inline-block; }
   .edhead .fl { font-style:italic; color:var(--dim); font-size:13px; border-left:3px solid var(--line); padding:4px 10px; margin-top:4px; max-width:620px; }
   .adv { position:relative; font-size:12px; color:var(--dim); }
   .adv summary { list-style:none; cursor:pointer; padding:7px 4px; }
@@ -67,6 +70,10 @@
   .edopt img { width:44px; height:44px; border-radius:50%; }
   .edopt:hover { border-color:var(--line); }
   .edopt.picked { border-color:var(--good); }
+  .edopt.picked.p2 { border-color:#e0b54a; }
+  .edopt.picked.p3 { border-color:#e8853d; }
+  .edopt.p2 .badge { background:#e0b54a; }
+  .edopt.p3 .badge { background:#e8853d; }
   .edopt .badge { position:absolute; top:-6px; right:-6px; min-width:20px; height:20px; padding:0 5px; border-radius:10px; background:var(--good); color:#111; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; border:2px solid var(--card); }
   .edopt .ph { font-size:11px; color:var(--dim); text-align:center; }
   .edrank { display:flex; flex-wrap:wrap; gap:6px; font-size:12px; }
@@ -312,7 +319,7 @@ const CONFIG = {
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 15:58";
+const BUILD = "2026-11-10 16:09";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -1453,20 +1460,54 @@ async function edOpen(name) {
 async function edLoadPool() {
   $("edPerks").textContent = "Loading perks…";
   await loadWeaponPools([{ hash: ed.hash, tier: true }]);
+  await weaponMeta(ed.hash);
   edRender();
+}
+
+/* Screenshot and flavor text aren't in the light item list, so they come from the weapon's full definition (cached). */
+async function weaponMeta(hash) {
+  const key = "d2v_wmeta2_" + state.manifestVersion;
+  const cache = state.weaponMetaCache ||= (store.get(key) || {});
+  if (!(hash in cache)) {
+    try {
+      const d = await bungie(`/Destiny2/Manifest/DestinyInventoryItemDefinition/${hash}/`);
+      const frameHash = (d.sockets?.socketEntries || [])[0]?.singleInitialItemHash;
+      cache[hash] = {
+        shot: d.screenshot || "",
+        slot: { 1498876634: "Kinetic", 2465295065: "Energy", 953998645: "Power" }[d.inventory?.bucketTypeHash] || "",
+        element: { 1: "Kinetic", 2: "Arc", 3: "Solar", 4: "Void", 6: "Stasis", 7: "Strand" }[d.defaultDamageType] || "",
+        type: d.itemTypeDisplayName || "",
+        ammo: { 1: "Primary", 2: "Special", 3: "Heavy" }[d.equippingBlock?.ammoType] || "",
+        frame: frameHash ? (state.plugNames[frameHash] || "") : "",
+      };
+    } catch (e) { cache[hash] = { shot: "" }; }
+    for (const k of Object.keys(localStorage)) if (/^d2v_wmeta2?_/.test(k) && k !== key) store.del(k);
+    store.set(key, cache);
+  }
+  return cache[hash];
 }
 
 function edRender() {
   const map = nameToPlug();
   const cols = poolColumns(ed.hash);
-  const d = state.defs?.[ed.hash] || {};
+  const d = { ...(state.defs?.[ed.hash] || {}), ...(state.weaponMetaCache?.[ed.hash] || {}) };
   const head = $("edHead");
   head.hidden = false;
   head.innerHTML = "";
   if (d.icon) head.append(Object.assign(document.createElement("img"), { src: BUNGIE + d.icon, alt: "" }));
   const txt = document.createElement("div");
   txt.append(Object.assign(document.createElement("div"), { className: "nm", textContent: ed.name }));
-  if (d.flavor) txt.append(Object.assign(document.createElement("div"), { className: "fl", textContent: d.flavor }));
+  // Slot, element, type, ammo and frame (archetype), as chips.
+  const chips = document.createElement("div"); chips.className = "chips";
+  const EL_COLOR = { Arc: "#7ac8f5", Solar: "#f2913d", Void: "#b48cf0", Stasis: "#5c8cf0", Strand: "#4fd08a", Kinetic: "#d8d8d8" };
+  for (const [label, val] of [["Slot", d.slot], ["Element", d.element], ["Type", d.type], ["Ammo", d.ammo], ["Frame", d.frame]]) {
+    if (!val) continue;
+    const c = document.createElement("span"); c.className = "chip"; c.title = label;
+    if (label === "Element") c.innerHTML = `<i style="background:${EL_COLOR[val] || "#ccc"}"></i>`;
+    c.append(val);
+    chips.append(c);
+  }
+  txt.append(chips);
   head.append(txt);
   const hero = $("edHero");
   hero.hidden = !d.shot;
@@ -1478,11 +1519,14 @@ function edRender() {
     const col = document.createElement("div"); col.className = "edcol";
     col.append(Object.assign(document.createElement("h4"), { textContent: c.label }));
     const opts = col;
+    // Within a column: the highest-priority pick is green, the next yellow, any others orange.
+    const colPicks = c.names.map(n => ed.picks.findIndex(x => norm(x) === n)).filter(r => r >= 0).sort((a, b) => a - b);
     for (const n of c.names) {
       const h = map[n], display = state.plugNames[h] || n;
       const rank = ed.picks.findIndex(x => norm(x) === n);
       const o = document.createElement("div");
-      o.className = "edopt" + (rank >= 0 ? " picked" : "");
+      const place = colPicks.indexOf(rank);
+      o.className = "edopt" + (rank >= 0 ? " picked" + (place === 1 ? " p2" : place >= 2 ? " p3" : "") : "");
       o.title = display;
       if (state.plugIcons[h]) { const img = document.createElement("img"); img.src = BUNGIE + state.plugIcons[h]; img.alt = display; o.append(img); }
       else o.append(Object.assign(document.createElement("span"), { className: "ph", textContent: display.split(" ").map(w => w[0]).join("").slice(0, 3) }));
