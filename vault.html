@@ -494,6 +494,7 @@ function render() {
    Rows with the same class and set make one 5-piece target (rows 6–10 a second one, and so on).
    Which slot fills which row doesn't matter. For each target the page keeps the best set it can build from your
    armor (partial if you don't have it all yet); every other legendary armor piece is junk. */
+const EXOTIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=133060317&single=true&output=csv"; // exotic armor list (Class, Exotic, Archetype, Tertiary)
 const ARMOR_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1186443884&single=true&output=csv"; // your armor list, published to the web as CSV
 const STAT = { weapons: 2996146975, health: 392767087, class: 1943323491, grenade: 1735777505, super: 144602215, melee: 4244567218 };
 const STAT_NAME = Object.fromEntries(Object.entries(STAT).map(([k, v]) => [v, k[0].toUpperCase() + k.slice(1)]));
@@ -601,7 +602,7 @@ function readArmor() {
   const out = [];
   const add = (it, where) => {
     const def = state.armorDefs[it.itemHash];
-    if (!def || !it.itemInstanceId || def.tier !== TIER_LEGENDARY) return;
+    if (!def || !it.itemInstanceId || (def.tier !== TIER_LEGENDARY && def.tier !== 6)) return;
     out.push({ id: it.itemInstanceId, hash: it.itemHash, def, where, locked: (it.state & 1) === 1,
       plugged: (sockets[it.itemInstanceId]?.sockets || []).map(s => s.plugHash || 0),
       reusable: reusable[it.itemInstanceId]?.plugs || {} });
@@ -905,7 +906,7 @@ function renderArmor() {
   $("armorResults").hidden = false;
   const junk = all.filter(a => a.junk);
   $("armorStats").innerHTML = "";
-  for (const [k, v] of [["Legendary armor", all.length], ["Junk", junk.length], ["Kept for sets", all.filter(a => !a.junk && /^in your/.test(a.why)).length]]) {
+  for (const [k, v] of [["Legendary armor", all.filter(a => a.def.tier !== 6).length], ["Exotic armor", all.filter(a => a.def.tier === 6).length], ["Junk", junk.length], ["Kept for sets", all.filter(a => !a.junk && /^in your/.test(a.why)).length]]) {
     const d = document.createElement("div"); d.innerHTML = `<b>${v}</b> <span class="muted">${k}</span>`; $("armorStats").append(d);
   }
   $("armorQuery").value = junk.length ? `-tag:keep (${junk.map(a => "id:" + a.id).join(" OR ")})` : "";
@@ -929,14 +930,12 @@ function renderArmor() {
     counts.innerHTML = `<span class="good" title="Perfect">${perfect}/${picks.length}</span> &nbsp;<span class="warn" title="Perfect + partial">${have}/${picks.length}</span>`;
     head.append(title, counts);
     box.append(head);
-    // Slots in order; unfilled rows go to the empty slots.
+    // Slots in order; unfilled rows go to the empty slots. Details are in each icon's hover text.
     const bySlot = Object.fromEntries(picks.filter(p => p.piece).map(p => [p.slot, p]));
     const missingRows = picks.filter(p => !p.piece).map(p => p.row);
+    const has = a => [a.archetype || "no archetype", `${a.tertiary || "no"} tertiary`, `${a.tuning || "no"} tuning`].join(" · ");
     const tiles = document.createElement("div");
     tiles.className = "slots";
-    const issues = document.createElement("ul");
-    issues.className = "issues";
-    const missing = new Map(); // want text -> slots
     for (const s of SLOT_ORDER) {
       const p = bySlot[s];
       const tile = document.createElement("div");
@@ -946,27 +945,20 @@ function renderArmor() {
         const img = document.createElement("img");
         img.src = BUNGIE + p.piece.def.icon; img.alt = "";
         tile.append(img);
-        tile.title = `${SLOT[s]}: ${p.piece.archetype || "no archetype"} · ${p.piece.tertiary || "?"} tertiary · ${p.piece.tuning || "no"} tuning`;
-        if (gaps.length) { const li = document.createElement("li"); li.className = "part"; li.textContent = `${SLOT[s]}: ${gaps.join(", ")}`; issues.append(li); }
+        tile.title = gaps.length
+          ? `${SLOT[s]}\nShould have: ${wantText(p.row)}\nActually has: ${has(p.piece)}`
+          : `${SLOT[s]}: ${has(p.piece)}`;
       } else {
         const row = missingRows.shift();
         if (!row) continue; // fewer than 5 rows on the list
         tile.className = "slot miss";
         tile.innerHTML = `<span class="lbl">${SLOT_SHORT[s]}</span>`;
-        tile.title = `${SLOT[s]}: missing`;
-        const w = wantText(row);
-        missing.set(w, [...(missing.get(w) || []), SLOT[s]]);
+        tile.title = `${SLOT[s]}\nShould have: ${wantText(row)}\nActually has: nothing`;
       }
       tiles.append(tile);
     }
     box.append(tiles);
-    for (const [w, slotsMissing] of missing) {
-      const li = document.createElement("li"); li.className = "miss";
-      li.textContent = `Missing ${slotsMissing.length === 5 ? "all 5" : slotsMissing.join(", ")}: ${w}`;
-      issues.append(li);
-    }
-    if (issues.children.length) box.append(issues);
-    if (t.spares) { const sp = document.createElement("div"); sp.className = "spares"; sp.textContent = `${t.spares} spare${t.spares > 1 ? "s" : ""} kept until this set is perfect`; box.append(sp); }
+    if (t.spares) counts.title = `Perfect / perfect + partial · ${t.spares} spare${t.spares > 1 ? "s" : ""} kept until this set is perfect`;
     $("armorCol" + t.cls).append(box);
   }
 
@@ -987,17 +979,70 @@ function renderArmor() {
     }
     const tdN = document.createElement("td");
     tdN.textContent = a.def.name;
+    if (a.def.tier === 6) tdN.style.color = "var(--accent)";
     if (a.locked) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "locked" }));
     const sub = document.createElement("div");
     sub.className = a.junk ? "bad" : "muted";
     sub.textContent = (a.junk ? "Junk — " : "") + a.why;
     tdN.append(sub);
     const tdD = document.createElement("td"); tdD.className = "perks";
-    tdD.textContent = [["Titan", "Hunter", "Warlock"][a.def.cls], SLOT[a.def.bucket], a.set || (a.oldRaid ? "old raid armor" : "no set"), a.archetype || "no archetype", a.tertiary && a.tertiary + " tertiary", a.tuning && a.tuning + " tuning"].filter(Boolean).join(" · ");
+    tdD.textContent = [["Titan", "Hunter", "Warlock"][a.def.cls], SLOT[a.def.bucket], a.def.tier === 6 ? "exotic" : (a.set || (a.oldRaid ? "old raid armor" : "no set")), a.archetype || "no archetype", a.tertiary && a.tertiary + " tertiary", a.tuning && a.tuning + " tuning"].filter(Boolean).join(" · ");
     const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = a.where;
     tr.append(tdI, tdN, tdD, tdW);
     tb.append(tr);
   }
+}
+
+
+/* ---------- exotic armor ----------
+   One row per exotic: Class, Exotic, Archetype, Tertiary. Copies of the same exotic compete; only the best is kept:
+   archetype matches > tertiary isn't Health (unless asked for) > tertiary matches; ties go to the higher base stat total,
+   then the oldest. Exotics not on the list, and single copies, are never junk. Tuning doesn't matter here. */
+async function loadExoticList() {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  let text;
+  try { text = await (await fetch(EXOTIC_CSV, { signal: ctl.signal, cache: "no-store" })).text(); }
+  finally { clearTimeout(timer); }
+  const rows = parseCSV(text);
+  const head = (rows[0] || []).map(norm);
+  const col = (...names) => head.findIndex(h => names.some(n => h === norm(n)));
+  const c = { name: col("Exotic", "Name"), arch: col("Archetype"), ter: col("Tertiary") };
+  if (c.name < 0) throw new Error("The exotic CSV needs an Exotic column (plus Archetype and Tertiary).");
+  const out = {};
+  for (const r of rows.slice(1)) {
+    const name = (r[c.name] || "").trim();
+    if (name) out[norm(name)] = { archetype: (r[c.arch] || "").trim(), tertiary: (r[c.ter] || "").trim(), tuning: "" };
+  }
+  log(`Exotic list loaded (${Object.keys(out).length} exotics).`);
+  return out;
+}
+
+function exoticFit(a, row) {
+  const arch = anyArch(a.archetype, row.archetype);
+  const terOk = statKey(a.tertiary) !== "health" || wantsHealth(row.tertiary);
+  const ter = anyStat(a.tertiary, row.tertiary);
+  return (arch ? 4 : 0) + (terOk ? 2 : 0) + (ter ? 1 : 0);
+}
+
+function judgeExotics(exotics, list) {
+  const groups = {};
+  for (const a of exotics) (groups[a.def.cls + "|" + norm(a.def.name)] ||= []).push(a);
+  for (const g of Object.values(groups)) {
+    const row = list[norm(g[0].def.name)];
+    for (const a of g) { a.junk = false; a.gaps = []; }
+    if (!row) { for (const a of g) a.why = "exotic not on your exotic list"; continue; }
+    for (const a of g) { a.fit = exoticFit(a, row); a.gaps = fitGaps(a, row); }
+    g.sort((x, y) => y.fit - x.fit || y.total - x.total || (BigInt(x.id) < BigInt(y.id) ? -1 : 1));
+    g[0].why = g.length > 1 ? `best copy of ${g.length}` : "only copy";
+    if (g[0].gaps.length) g[0].why += ` (has ${g[0].gaps.join(", ")})`;
+    for (const a of g.slice(1)) {
+      a.junk = true;
+      a.why = a.fit < g[0].fit ? "a better copy exists" : a.total < g[0].total ? "an equally good copy has higher stats" : "duplicate of an older copy";
+      if ($("optArmorLocked").checked && a.locked) { a.junk = false; a.why += " · kept: locked"; }
+    }
+  }
+  return exotics;
 }
 
 async function scanArmor() {
@@ -1006,9 +1051,11 @@ async function scanArmor() {
   if (!list) { $("armorNote").hidden = false; return; }
   $("armorNote").hidden = true;
   await loadSets();
-  const armor = readArmor();
-  await ensurePlugInfo(armor.flatMap(a => a.plugged).filter(Boolean));
-  armor.forEach(describeArmor);
+  const allArmor = readArmor();
+  await ensurePlugInfo(allArmor.flatMap(a => a.plugged).filter(Boolean));
+  allArmor.forEach(describeArmor);
+  const armor = allArmor.filter(a => a.def.tier === TIER_LEGENDARY);
+  const exotics = allArmor.filter(a => a.def.tier === 6);
   // Old raid armor: from a raid (Collections source) and from before archetypes.
   try {
     await loadSources();
@@ -1018,7 +1065,11 @@ async function scanArmor() {
   const n = armor.filter(a => a.archetype).length;
   log(`Armor: ${armor.length} legendary pieces, ${n} with an archetype, ${armor.filter(a => a.tertiary).length} with a tertiary stat, ${armor.filter(a => a.tuning).length} with tuning, ${armor.filter(a => a.set).length} in a set.`);
   state.armorList = list;
-  state.armorResults = knockout(armor, list);
+  knockout(armor, list);
+  try { state.exoticList = await loadExoticList(); } catch (e) { log("Exotic list error: " + e.message); state.exoticList = {}; }
+  judgeExotics(exotics, state.exoticList);
+  log(`Exotics: ${exotics.length} pieces, ${exotics.filter(a => a.junk).length} junk.`);
+  state.armorResults = [...armor, ...exotics];
   log(`Armor: ${state.armorResults.filter(a => a.junk).length} junk.`);
   renderArmor();
 }
@@ -1089,7 +1140,14 @@ function wire() {
   for (const id of ["optArmorUnlisted", "optArmorLocked", "optArmorOldRaid"]) {
     const saved = store.get("d2v_" + id);
     if (saved != null) $(id).checked = saved;
-    $(id).onchange = () => { store.set("d2v_" + id, $(id).checked); if (state.armorResults && state.armorList) { knockout(state.armorResults, state.armorList); renderArmor(); } };
+    $(id).onchange = () => {
+      store.set("d2v_" + id, $(id).checked);
+      if (state.armorResults && state.armorList) {
+        knockout(state.armorResults.filter(a => a.def.tier !== 6), state.armorList);
+        judgeExotics(state.armorResults.filter(a => a.def.tier === 6), state.exoticList || {});
+        renderArmor();
+      }
+    };
   }
 }
 
