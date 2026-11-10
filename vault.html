@@ -315,7 +315,7 @@ async function loadDefs() {
       const n = norm(d.displayProperties.name || "");
       if (n && !nameIcon[n] && /trait|barrel|magazine|perk|origin|scope|sight|blade|guard|bowstring|arrow|haft|battery|grip|stock|launcher|tube|rail/i.test(d.itemTypeDisplayName || "")) nameIcon[n] = d.displayProperties.icon; }
     if (d.itemType === ITEMTYPE_WEAPON && d.inventory) {
-      defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "" };
+      defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "", recipe: !!d.inventory.recipeItemHash };
     }
     if (d.itemType === 2 && d.inventory) {
       armorDefs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, cls: d.classType, bucket: d.inventory.bucketTypeHash, coll: d.collectibleHash || 0 };
@@ -359,7 +359,9 @@ async function loadWeapons() {
       perks: names,
       sockets: socks,
       locked: (it.state & 1) === 1,
-      crafted: (it.state & 8) === 8,
+      // Bungie's "crafted" flag is also set on enhanced weapons; only weapons with a crafting pattern are truly crafted (as DIM decides).
+      crafted: (it.state & 8) === 8 && def.recipe,
+      enhanced: (it.state & 8) === 8 && !def.recipe,
       power: instances[it.itemInstanceId]?.primaryStat?.value || 0,
     });
   };
@@ -631,6 +633,7 @@ function render() {
     };
     tdN.append(nm);
     if (w.crafted) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "crafted" }));
+    if (w.enhanced) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "enhanced" }));
     if (w.locked) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "locked" }));
     const sub = document.createElement("div");
     sub.className = w.junk ? "bad" : "muted";
