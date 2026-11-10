@@ -96,7 +96,7 @@
 <body>
 <header>
   <h1>D2 Vault Cleaner</h1>
-  <span id="account" class="muted"></span>
+  <span><span id="account" class="muted"></span> <span id="build" class="muted" style="font-size:11px;margin-left:10px"></span></span>
 </header>
 <main>
   <p class="intro">Checks your legendary weapons and armor against your lists and finds the junk. Weapons: a copy is junk if a better copy exists or the weapon isn't on your list. Armor: for each set on your list, the best 5 pieces are kept; everything else is junk.</p>
@@ -126,11 +126,11 @@
     <div class="card">
       <h2>Settings</h2>
       <div class="settings">
-        <label for="tieredUrl">Tiered Weapons CSV <span class="muted">(optional)</span></label>
-        <input type="text" id="tieredUrl" placeholder="Leave empty to use the built-in tier list">
+        <label for="tieredUrl">Weapon list CSV <span class="muted">(optional)</span></label>
+        <input type="text" id="tieredUrl" placeholder="Leave empty to use the built-in weapon list">
       </div>
       <div class="rules">
-        <label><input type="checkbox" id="optUnlisted" checked> Weapons not on the Tiered list are junk</label>
+        <label><input type="checkbox" id="optUnlisted" checked> Weapons not on the list are junk</label>
         <label><input type="checkbox" id="optCrafted" checked> Never mark crafted weapons as junk</label>
         <label><input type="checkbox" id="optLocked"> Never mark locked weapons as junk</label>
       </div>
@@ -213,9 +213,11 @@ const CONFIG = {
   apiKey:   "21b8ffe314f04303b42c3e01c0897a3d",
   clientId: "56678",
 };
-/* Your Tiered Weapons tab, published to the web as CSV. Used unless a different link is entered in Settings. */
+/* Your weapon list (Weapon, Priority 1–11), published to the web as CSV. Used unless a different link is entered in Settings. */
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
+/* Bump this with every change, so you can tell which version the browser is running. */
+const BUILD = "2026-11-10 15:58";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -224,6 +226,7 @@ const VAULT = "vault";
 
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const cleanPerk = n => String(n).replace(/\s*\(enhanced\)\s*$/i, "").replace(/\s+enhanced$/i, "").replace(/^enhanced\s+/i, "").trim();
 const norm = s => String(s).toLowerCase().replace(/[‘’`]/g, "'").replace(/\s+/g, " ").trim();
 const store = {
   get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
@@ -309,7 +312,8 @@ async function loadDefs() {
   const defs = {}, plugs = {}, armorDefs = {}, plugInfo = {}, icons = {}, nameIcon = {}, types = {};
   for (const [h, d] of Object.entries(raw)) {
     // Every item's name: perks are items too, and the light item list doesn't always include their plug details.
-    if (d.displayProperties?.name) plugs[h] = d.displayProperties.name;
+    // Enhanced perks are named like "Golden Tricorn Enhanced"; treat them as the same perk as the base one.
+    if (d.displayProperties?.name) plugs[h] = /enhanced/i.test(d.itemTypeDisplayName || "") ? cleanPerk(d.displayProperties.name) : d.displayProperties.name;
     if (d.itemTypeDisplayName) types[h] = d.itemTypeDisplayName;
     if (d.displayProperties?.icon) { icons[h] = d.displayProperties.icon;
       const n = norm(d.displayProperties.name || "");
@@ -374,7 +378,7 @@ async function loadWeapons() {
   return out;
 }
 
-/* ---------- Tiered Weapons ---------- */
+/* ---------- weapon list ---------- */
 function parseCSV(text) {
   const rows = []; let row = [], cell = "", q = false;
   for (let i = 0; i < text.length; i++) {
@@ -407,7 +411,7 @@ async function loadTiered() {
   const col = name => head.indexOf(norm(name));
   const wi = col("Weapon");
   const pi = Array.from({ length: 11 }, (_, k) => col("Priority " + (k + 1)));
-  if (wi < 0 || pi.some(i => i < 0)) throw new Error("That CSV doesn't have Weapon and Priority 1–11 columns. Publish the Tiered Weapons tab.");
+  if (wi < 0 || pi.some(i => i < 0)) throw new Error("The weapon list CSV needs Weapon and Priority 1–11 columns.");
   const tiers = {};
   for (const r of rows.slice(1)) {
     const name = (r[wi] || "").trim();
@@ -428,7 +432,7 @@ async function loadTiered() {
   // Every perk named in each column across the whole list, to tell which socket on a weapon is its barrel, magazine, etc.
   state.colNames = Object.fromEntries(PERK_COLS.map(c => [c.key, new Set()]));
   for (const rows of Object.values(tiers)) for (const t of rows) for (const c of PERK_COLS) for (const k of [c.top, ...c.alts]) if (t.prio[k]) state.colNames[c.key].add(norm(t.prio[k]));
-  log(`Tiered Weapons loaded (${Object.keys(tiers).length} weapons).`);
+  log(`Weapon list loaded (${Object.keys(tiers).length} weapons).`);
   return tiers;
 }
 
@@ -446,7 +450,7 @@ const PERK_COLS = [
 /* Perk sockets are recognized by their plugs' item type (Barrel, Magazine, Trait, Enhanced Trait, Origin Trait, Blade,
    Guard, Bowstring, Arrow, Battery, Scope, Stock…), so shaders, mods, ornaments, trackers and masterworks are never mistaken for perks. */
 const PERK_TYPE = /barrel|magazine|trait|scope|sight|blade|guard|bowstring|arrow|battery|grip|stock|launcher|tube|haft|rail|bolt/i;
-const NOT_PERK_TYPE = /shader|ornament|tracker|masterwork|mod\b|memento|catalyst|intrinsic|transmat|emblem|projection/i;
+const NOT_PERK_TYPE = /shader|ornament|tracker|masterwork|mod\b|memento|catalyst|intrinsic|transmat|emblem|projection|focus/i; // "Blade Focus" = glaive mod sockets
 const plugType = h => state.plugTypes?.[h] || "";
 const isPerkPlug = h => PERK_TYPE.test(plugType(h)) && !NOT_PERK_TYPE.test(plugType(h));
 
@@ -560,7 +564,7 @@ function score(weapons, tiers) {
   for (const w of weapons) {
     w.best = best[key(w)] ?? null;
     let junk = w.score == null ? opt.unlisted : w.score < w.best;
-    w.why = w.score == null ? "not on the Tiered list" : (w.score < w.best ? "a better copy exists" : "best copy");
+    w.why = w.score == null ? "not on the weapon list" : (w.score < w.best ? "a better copy exists" : "best copy");
     if (junk && opt.crafted && w.crafted) { junk = false; w.why += " · kept: crafted"; }
     if (junk && opt.locked && w.locked) { junk = false; w.why += " · kept: locked"; }
     w.junk = junk;
@@ -676,7 +680,7 @@ function render() {
       }
       tdP.append(grid);
     } else {
-      tdP.textContent = "Not on your Tiered list";
+      tdP.textContent = "Not on the weapon list";
     }
     const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = w.where;
     const tdX = document.createElement("td"); tdX.className = "excl";
@@ -1365,6 +1369,7 @@ function wire() {
 }
 
 async function init() {
+  $("build").textContent = "build " + BUILD;
   wire();
   if (!CONFIG.apiKey || CONFIG.apiKey.startsWith("PASTE") || !CONFIG.clientId || CONFIG.clientId.startsWith("PASTE")) { $("setup").hidden = false; return; }
   try { await handleRedirect(); } catch (e) { $("app").hidden = false; log("Error: " + e.message); }
