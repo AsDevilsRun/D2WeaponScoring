@@ -53,7 +53,14 @@
   .adv summary::after { content:" ▾"; }
   .adv[open] summary { color:var(--text); }
   .advmenu { position:absolute; right:0; top:100%; z-index:5; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px; white-space:nowrap; }
-  .edcols { display:flex; gap:14px; margin:6px 0 14px; align-items:flex-start; }
+  .edbody { display:flex; gap:20px; align-items:flex-start; }
+  .edcols { display:flex; gap:14px; margin:6px 0 14px; align-items:flex-start; flex:none; }
+  .edhero { flex:1; min-width:260px; align-self:stretch; min-height:300px; position:relative; overflow:hidden; border-radius:8px; }
+  /* Bungie's screenshot has a scene behind the weapon, so it is faded into the page with a radial mask instead of a true cut-out. */
+  .edhero img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center;
+    -webkit-mask-image:radial-gradient(ellipse 60% 55% at 50% 50%, #000 35%, transparent 75%);
+            mask-image:radial-gradient(ellipse 60% 55% at 50% 50%, #000 35%, transparent 75%); opacity:.95; }
+  @media (max-width:1000px){ .edhero { display:none; } }
   .edcol { display:flex; flex-direction:column; gap:10px; align-items:center; }
   .edcol h4 { margin:0; font-size:10px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.05em; height:14px; white-space:nowrap; }
   .edopt { position:relative; width:52px; height:52px; border-radius:50%; background:#000; border:3px solid transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; user-select:none; transition:border-color .1s; }
@@ -217,7 +224,10 @@
       </div>
       <div class="muted" style="font-size:12px;margin-bottom:8px">Click perks from most to least important (up to 11). Click again to remove. Shift-click a picked perk to move it up one place, Alt-click to move it down. Pick 1 = 25 points, pick 2 = 20, then 9, 8, 7, … down to 1.</div>
       <div id="edHead" class="edhead" hidden></div>
-      <div id="edPerks" class="edcols"></div>
+      <div class="edbody">
+        <div id="edPerks" class="edcols"></div>
+        <div id="edHero" class="edhero" hidden></div>
+      </div>
       <div id="edRank" class="edrank"></div>
       <div class="controls" style="margin-top:10px">
         <button id="edSave" class="primary">Save to my list</button>
@@ -402,7 +412,7 @@ async function loadDefs() {
       const n = norm(d.displayProperties.name || "");
       if (n && !nameIcon[n] && /trait|barrel|magazine|perk|origin|scope|sight|blade|guard|bowstring|arrow|haft|battery|grip|stock|launcher|tube|rail/i.test(d.itemTypeDisplayName || "")) nameIcon[n] = d.displayProperties.icon; }
     if (d.itemType === ITEMTYPE_WEAPON && d.inventory) {
-      defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "", recipe: !!d.inventory.recipeItemHash, flavor: d.flavorText || "" };
+      defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "", recipe: !!d.inventory.recipeItemHash, flavor: d.flavorText || "", shot: d.screenshot || "" };
     }
     if (d.itemType === 2 && d.inventory) {
       armorDefs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, cls: d.classType, bucket: d.inventory.bucketTypeHash, coll: d.collectibleHash || 0 };
@@ -1456,6 +1466,9 @@ function edRender() {
   txt.append(Object.assign(document.createElement("div"), { className: "nm", textContent: ed.name }));
   if (d.flavor) txt.append(Object.assign(document.createElement("div"), { className: "fl", textContent: d.flavor }));
   head.append(txt);
+  const hero = $("edHero");
+  hero.hidden = !d.shot;
+  hero.innerHTML = d.shot ? `<img src="${BUNGIE + d.shot}" alt="">` : "";
   const box = $("edPerks");
   box.innerHTML = "";
   if (!cols.length) { box.textContent = "Couldn't read this weapon's perks."; return; }
