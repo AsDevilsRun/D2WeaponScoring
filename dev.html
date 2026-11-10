@@ -13,7 +13,7 @@
   h2 { font-size:14px; margin:0 0 8px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
   main { max-width:1200px; margin:0 auto; padding:16px 20px 40px; }
   .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; }
-  button, input[type=text] { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 12px; font:inherit; }
+  button, input[type=text], select { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 12px; font:inherit; }
   button { cursor:pointer; }
   button:hover:not(:disabled) { border-color:var(--accent); }
   button:disabled { opacity:.45; cursor:default; }
@@ -43,6 +43,26 @@
   .tabs button.on { border-color:var(--accent); color:var(--accent); }
   .filter { max-width:260px; }
   [hidden] { display:none !important; }
+  .edhead { display:flex; align-items:center; gap:14px; margin:4px 0 14px; }
+  .edhead img { width:72px; height:72px; border-radius:4px; border:1px solid var(--line); }
+  .edhead .nm { font-size:22px; font-weight:700; }
+  .edhead .fl { font-style:italic; color:var(--dim); font-size:13px; border-left:3px solid var(--line); padding:4px 10px; margin-top:4px; max-width:620px; }
+  .edcols { display:flex; gap:14px; margin:6px 0 14px; align-items:flex-start; }
+  .edcol { display:flex; flex-direction:column; gap:10px; align-items:center; }
+  .edcol h4 { margin:0; font-size:10px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.05em; height:14px; white-space:nowrap; }
+  .edopt { position:relative; width:52px; height:52px; border-radius:50%; background:#000; border:3px solid transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; user-select:none; transition:border-color .1s; }
+  .edopt img { width:44px; height:44px; border-radius:50%; }
+  .edopt:hover { border-color:var(--line); }
+  .edopt.picked { border-color:var(--good); }
+  .edopt.picked.top { border-color:var(--accent); }
+  .edopt .badge { position:absolute; top:-6px; right:-6px; min-width:20px; height:20px; padding:0 5px; border-radius:10px; background:var(--good); color:#111; font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; border:2px solid var(--card); }
+  .edopt.top .badge { background:var(--accent); }
+  .edopt .ph { font-size:11px; color:var(--dim); text-align:center; }
+  .edrank { display:flex; flex-wrap:wrap; gap:6px; font-size:12px; }
+  .edrank span { border:1px solid var(--line); border-radius:12px; padding:2px 10px; }
+  .edlist { columns:260px; column-gap:16px; font-size:13px; }
+  .edlist div { break-inside:avoid; padding:2px 0; cursor:pointer; }
+  .edlist div:hover { color:var(--accent); }
   td.excl { text-align:center; width:1%; white-space:nowrap; }
   td.excl input { width:16px; height:16px; cursor:pointer; accent-color:var(--bad); }
   tr.excluded td { opacity:.55; }
@@ -95,7 +115,7 @@
 </head>
 <body>
 <header>
-  <h1>D2 Vault Cleaner <span class="muted" style="font-size:13px;font-weight:400">dev · DIM exports</span></h1>
+  <h1>D2 Vault Cleaner <span class="muted" style="font-size:13px;font-weight:400">dev</span></h1>
   <span id="account" class="muted"></span>
 </header>
 <main>
@@ -114,14 +134,18 @@
 
   <section id="app" hidden>
     <div class="card">
-      <h2>DIM exports</h2>
-      <div class="settings">
+      <h2>Data</h2>
+      <div class="rules" style="margin:0 0 10px">
+        <label><input type="radio" name="src" id="srcVault" value="vault" checked> My vault <span class="muted" id="vaultStatus"></span></label>
+        <label><input type="radio" name="src" id="srcExport" value="export"> A DIM export</label>
+      </div>
+      <div id="exportBox" class="settings">
         <label for="fileWeapons">Weapons CSV</label>
         <input type="file" id="fileWeapons" accept=".csv,text/csv">
         <label for="fileArmor">Armor CSV</label>
         <input type="file" id="fileArmor" accept=".csv,text/csv">
       </div>
-      <div class="muted" id="fileStatus" style="margin-top:6px">In DIM: Settings → Spreadsheets → Weapons / Armor. The last files you loaded are remembered.</div>
+      <div class="muted" id="fileStatus" style="margin-top:6px"></div>
     </div>
     <div class="controls">
       <button id="btnScan" class="primary">Scan</button>
@@ -131,17 +155,18 @@
     <div class="pagetabs">
       <button id="pageTabWeapons" class="on">Weapons</button>
       <button id="pageTabArmor">Armor</button>
+      <button id="pageTabEditor">List editor</button>
     </div>
 
     <div id="pageWeapons">
     <div class="card">
       <h2>Settings</h2>
       <div class="settings">
-        <label for="tieredUrl">Tiered Weapons CSV <span class="muted">(optional)</span></label>
-        <input type="text" id="tieredUrl" placeholder="Leave empty to use the built-in tier list">
+        <label for="tieredUrl">Weapon list CSV <span class="muted">(optional)</span></label>
+        <input type="text" id="tieredUrl" placeholder="Leave empty to use the built-in weapon list">
       </div>
       <div class="rules">
-        <label><input type="checkbox" id="optUnlisted" checked> Weapons not on the Tiered list are junk</label>
+        <label><input type="checkbox" id="optUnlisted" checked> Weapons not on the list are junk</label>
         <label><input type="checkbox" id="optCrafted" checked> Never mark crafted weapons as junk</label>
         <label><input type="checkbox" id="optLocked"> Never mark locked weapons as junk</label>
       </div>
@@ -165,6 +190,39 @@
         <thead><tr><th></th><th data-sort="name">Weapon</th><th>Perks <span class="muted" style="font-weight:400">(hover for names)</span></th><th data-sort="where">Location</th><th title="Untick to leave a junk copy out of the DIM search">In DIM search</th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
+    </div>
+    </div>
+
+    <div id="pageEditor" hidden>
+    <div class="card">
+      <h2>Rank a weapon's perks</h2>
+      <div class="controls">
+        <input type="text" id="edSearch" list="edNames" placeholder="Find a weapon" style="max-width:320px">
+        <datalist id="edNames"></datalist>
+        <select id="edVersion" hidden title="This weapon has more than one version"></select>
+        <span class="muted" id="edInfo"></span>
+      </div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Click perks from most to least important (up to 11). Click again to remove. Pick 1 = 25 points, pick 2 = 20, then 9, 8, 7, … down to 1.</div>
+      <div id="edHead" class="edhead" hidden></div>
+      <div id="edPerks" class="edcols"></div>
+      <div id="edRank" class="edrank"></div>
+      <div class="controls" style="margin-top:10px">
+        <button id="edSave" class="primary">Save to my list</button>
+        <button id="edClear">Clear picks</button>
+        <button id="edRemove">Remove from my list</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>My list <span class="muted" style="text-transform:none;letter-spacing:0" id="edCount"></span></h2>
+      <div class="rules" style="margin:0 0 10px">
+        <label><input type="checkbox" id="useMine" checked> Use my list when scanning (it replaces the sheet's row for weapons it has)</label>
+      </div>
+      <div class="controls">
+        <button id="edImport" class="small">Copy the sheet's list into mine</button>
+        <button id="edExport" class="small">Download as CSV</button>
+        <button id="edWipe" class="small">Delete my list</button>
+      </div>
+      <div id="edList" class="edlist"></div>
     </div>
     </div>
 
@@ -227,7 +285,7 @@ const CONFIG = {
   // not from a file on your computer. No OAuth needed: nothing here signs in.
   apiKey: "21b8ffe314f04303b42c3e01c0897a3d",
 };
-/* Your Tiered Weapons tab, published to the web as CSV. Used unless a different link is entered in Settings. */
+/* Your weapon list (Weapon, Priority 1–11), published to the web as CSV. Used unless a different link is entered in Settings. */
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 const BUNGIE = "https://www.bungie.net";
@@ -329,7 +387,7 @@ async function loadDefs() {
       const n = norm(d.displayProperties.name || "");
       if (n && !nameIcon[n] && /trait|barrel|magazine|perk|origin|scope|sight|blade|guard|bowstring|arrow|haft|battery|grip|stock|launcher|tube|rail/i.test(d.itemTypeDisplayName || "")) nameIcon[n] = d.displayProperties.icon; }
     if (d.itemType === ITEMTYPE_WEAPON && d.inventory) {
-      defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "", recipe: !!d.inventory.recipeItemHash };
+      defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "", recipe: !!d.inventory.recipeItemHash, flavor: d.flavorText || "" };
     }
     if (d.itemType === 2 && d.inventory) {
       armorDefs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, cls: d.classType, bucket: d.inventory.bucketTypeHash, coll: d.collectibleHash || 0 };
@@ -388,7 +446,7 @@ async function loadWeapons() {
   return out;
 }
 
-/* ---------- Tiered Weapons ---------- */
+/* ---------- weapon list ---------- */
 function parseCSV(text) {
   const rows = []; let row = [], cell = "", q = false;
   for (let i = 0; i < text.length; i++) {
@@ -409,6 +467,23 @@ function parseCSV(text) {
 /* A weapon can have several rows (different roll targets); a copy scores against each and keeps its best, as your Scores tab does.
    Points, as in your sheet: Priority 1 = 25, Priority 2 = 20, then the filled Priorities 3–11 in order get 9, 8, 7, …
    Max = 90 − (9 − n)(10 − n)/2, where n is how many of Priorities 3–11 are filled. */
+/* One row of the list: Priority 1 = 25 points, Priority 2 = 20, then the filled Priorities 3–11 in order get 9, 8, 7, … */
+function tierRow(name, prio) {
+  const p = k => (prio[k] || "").trim();
+  const pts = new Map();
+  if (p(0)) pts.set(norm(p(0)), { perk: p(0), v: 25 });
+  if (p(1) && !pts.has(norm(p(1)))) pts.set(norm(p(1)), { perk: p(1), v: 20 });
+  let v = 9, n = 0;
+  for (let k = 2; k < 11; k++) {
+    if (!p(k)) continue;
+    n++;
+    if (!pts.has(norm(p(k)))) pts.set(norm(p(k)), { perk: p(k), v });
+    v--;
+  }
+  return { name, pts, prio: Array.from({ length: 11 }, (_, k) => p(k)), max: 90 - (9 - n) * (10 - n) / 2 };
+}
+const myList = () => store.get("d2v_mylist") || {};
+
 async function loadTiered() {
   const url = $("tieredUrl").value.trim() || TIERED_CSV;
   const ctl = new AbortController();
@@ -421,28 +496,22 @@ async function loadTiered() {
   const col = name => head.indexOf(norm(name));
   const wi = col("Weapon");
   const pi = Array.from({ length: 11 }, (_, k) => col("Priority " + (k + 1)));
-  if (wi < 0 || pi.some(i => i < 0)) throw new Error("That CSV doesn't have Weapon and Priority 1–11 columns. Publish the Tiered Weapons tab.");
+  if (wi < 0 || pi.some(i => i < 0)) throw new Error("The weapon list CSV needs Weapon and Priority 1–11 columns.");
   const tiers = {};
   for (const r of rows.slice(1)) {
     const name = (r[wi] || "").trim();
     if (!name) continue;
-    const pts = new Map();
-    const p = k => (r[pi[k]] || "").trim();
-    if (p(0)) pts.set(norm(p(0)), { perk: p(0), v: 25 });
-    if (p(1) && !pts.has(norm(p(1)))) pts.set(norm(p(1)), { perk: p(1), v: 20 });
-    let v = 9, n = 0;
-    for (let k = 2; k < 11; k++) {
-      if (!p(k)) continue;
-      n++;
-      if (!pts.has(norm(p(k)))) pts.set(norm(p(k)), { perk: p(k), v });
-      v--;
-    }
-    (tiers[norm(name)] ||= []).push({ name, pts, prio: Array.from({ length: 11 }, (_, k) => p(k)), max: 90 - (9 - n) * (10 - n) / 2 });
+    (tiers[norm(name)] ||= []).push(tierRow(name, Array.from({ length: 11 }, (_, k) => (r[pi[k]] || "").trim())));
   }
+  state.sheetTiers = tiers;
+  // Your own list (made in the editor, saved in this browser) replaces the sheet's rows for the weapons it has.
+  const mine = myList();
+  if ($("useMine")?.checked !== false) for (const e of Object.values(mine)) tiers[norm(e.name)] = [tierRow(e.name, e.prio)];
+  if (Object.keys(mine).length) log(`My list: ${Object.keys(mine).length} weapons${$("useMine")?.checked === false ? " (not used)" : ""}.`);
   // Every perk named in each column across the whole list, to tell which socket on a weapon is its barrel, magazine, etc.
   state.colNames = Object.fromEntries(PERK_COLS.map(c => [c.key, new Set()]));
   for (const rows of Object.values(tiers)) for (const t of rows) for (const c of PERK_COLS) for (const k of [c.top, ...c.alts]) if (t.prio[k]) state.colNames[c.key].add(norm(t.prio[k]));
-  log(`Tiered Weapons loaded (${Object.keys(tiers).length} weapons).`);
+  log(`Weapon list loaded (${Object.keys(tiers).length} weapons).`);
   return tiers;
 }
 
@@ -574,7 +643,7 @@ function score(weapons, tiers) {
   for (const w of weapons) {
     w.best = best[key(w)] ?? null;
     let junk = w.score == null ? opt.unlisted : w.score < w.best;
-    w.why = w.score == null ? "not on the Tiered list" : (w.score < w.best ? "a better copy exists" : "best copy");
+    w.why = w.score == null ? "not on the weapon list" : (w.score < w.best ? "a better copy exists" : "best copy");
     if (junk && opt.crafted && w.crafted) { junk = false; w.why += " · kept: crafted"; }
     if (junk && opt.locked && w.locked) { junk = false; w.why += " · kept: locked"; }
     w.junk = junk;
@@ -690,7 +759,7 @@ function render() {
       }
       tdP.append(grid);
     } else {
-      tdP.textContent = "Not on your Tiered list";
+      tdP.textContent = "Not on the weapon list";
     }
     const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = w.where;
     const tdX = document.createElement("td"); tdX.className = "excl";
@@ -1274,12 +1343,23 @@ async function scanArmor() {
   const list = await loadArmorList();
   if (!list) { $("armorNote").hidden = false; return; }
   $("armorNote").hidden = true;
-  if (!csvText.armor) { log("Load your DIM armor export to check armor."); return; }
   await loadSets();
-  const allArmor = armorFromCSV(csvText.armor);
+  let allArmor;
+  if (state.source === "vault") {
+    allArmor = readArmor();
+    await ensurePlugInfo(allArmor.flatMap(a => a.plugged).filter(Boolean));
+    allArmor.forEach(describeArmor);
+    try {
+      await loadSources();
+      for (const a of allArmor) if (a.def.tier === TIER_LEGENDARY) { a.source = armorSource(a); a.oldRaid = !a.archetype && isRaidSource(a.source); }
+    } catch (e) { log("Couldn't read armor sources: " + e.message); }
+  } else {
+    if (!csvText.armor) { log("Load a DIM armor export to check armor."); return; }
+    allArmor = armorFromCSV(csvText.armor);
+  }
   const armor = allArmor.filter(a => a.def.tier === TIER_LEGENDARY);
   const exotics = allArmor.filter(a => a.def.tier === 6);
-  log(`Armor: ${armor.filter(a => a.oldRaid).length} old raid pieces (from DIM's source tags).`);
+  log(`Armor: ${armor.filter(a => a.oldRaid).length} old raid pieces.`);
   const n = armor.filter(a => a.archetype).length;
   log(`Armor: ${armor.length} legendary pieces, ${n} with an archetype, ${armor.filter(a => a.tertiary).length} with a tertiary stat, ${armor.filter(a => a.tuning).length} with tuning, ${armor.filter(a => a.set).length} in a set.`);
   state.armorList = list;
@@ -1292,6 +1372,167 @@ async function scanArmor() {
   renderArmor();
 }
 
+
+
+/* ==================== LIST EDITOR (dev) ====================
+   Pick a weapon, click its perks in order of importance, save. The ranking is the list row: pick 1 = Priority 1, and so on,
+   so scoring is unchanged. Saved in this browser (localStorage "d2v_mylist"); can be exported as a CSV in the sheet's format. */
+const ed = { name: null, hash: null, picks: [] };
+
+function edNamesIndex() {
+  if (state.edIndex) return state.edIndex;
+  const idx = {};
+  for (const [h, d] of Object.entries(state.defs || {})) if (d.tier === TIER_LEGENDARY && d.name && d.name !== "?") (idx[d.name] ||= []).push(Number(h));
+  state.edIndex = idx;
+  $("edNames").innerHTML = Object.keys(idx).sort().map(n => `<option value="${n.replace(/"/g, "&quot;")}">`).join("");
+  return idx;
+}
+
+/* The weapon's perk columns from its Bungie perk pool: barrel-like, magazine-like, traits, origin. */
+function poolColumns(hash) {
+  const pools = state.weaponPools?.[hash] || {};
+  const map = nameToPlug();
+  const socks = Object.keys(pools).map(Number).sort((a, b) => a - b)
+    .map(idx => ({ idx, names: pools[idx].filter(n => map[n] && isPerkPlug(map[n])) }))
+    .filter(s => s.names.length);
+  const kind = s => s.names.some(n => /origin/i.test(plugType(map[n]))) ? "origin" : s.names.some(n => /trait/i.test(plugType(map[n]))) ? "trait" : "part";
+  const parts = socks.filter(s => kind(s) === "part"), traits = socks.filter(s => kind(s) === "trait"), origins = socks.filter(s => kind(s) === "origin");
+  const cols = [];
+  const labelOf = (s, fallback) => { const t = plugType(map[s.names[0]]); return t && !/trait/i.test(t) ? t : fallback; };
+  parts.forEach((s, i) => cols.push({ label: labelOf(s, i ? "Magazine" : "Barrel"), names: s.names }));
+  traits.forEach((s, i) => cols.push({ label: "Trait " + (i + 1), names: s.names }));
+  origins.forEach(s => cols.push({ label: "Origin trait", names: s.names }));
+  return cols;
+}
+
+async function edOpen(name) {
+  const idx = edNamesIndex();
+  const hashes = idx[name];
+  if (!hashes) { $("edInfo").textContent = "No legendary weapon by that name."; return; }
+  ed.name = name;
+  // Prefer a version you own; otherwise the first one.
+  const owned = new Set((state.results || []).map(w => w.hash));
+  const versions = hashes.slice().sort((a, b) => owned.has(b) - owned.has(a));
+  $("edVersion").hidden = versions.length < 2;
+  $("edVersion").innerHTML = versions.map((h, i) => `<option value="${h}">Version ${i + 1}${owned.has(h) ? " (you own)" : ""}</option>`).join("");
+  ed.hash = versions[0];
+  // Start from your saved ranking, else the sheet's row.
+  const mine = myList()[norm(name)];
+  const sheet = state.sheetTiers?.[norm(name)]?.[0];
+  ed.picks = (mine?.prio || sheet?.prio || []).filter(Boolean);
+  $("edInfo").textContent = mine ? "Editing your saved ranking." : sheet ? "Starting from the sheet's ranking." : "Not ranked yet.";
+  await edLoadPool();
+}
+
+async function edLoadPool() {
+  $("edPerks").textContent = "Loading perks…";
+  await loadWeaponPools([{ hash: ed.hash, tier: true }]);
+  edRender();
+}
+
+function edRender() {
+  const map = nameToPlug();
+  const cols = poolColumns(ed.hash);
+  const d = state.defs?.[ed.hash] || {};
+  const head = $("edHead");
+  head.hidden = false;
+  head.innerHTML = "";
+  if (d.icon) head.append(Object.assign(document.createElement("img"), { src: BUNGIE + d.icon, alt: "" }));
+  const txt = document.createElement("div");
+  txt.append(Object.assign(document.createElement("div"), { className: "nm", textContent: ed.name }));
+  if (d.flavor) txt.append(Object.assign(document.createElement("div"), { className: "fl", textContent: d.flavor }));
+  head.append(txt);
+  const box = $("edPerks");
+  box.innerHTML = "";
+  if (!cols.length) { box.textContent = "Couldn't read this weapon's perks."; return; }
+  for (const c of cols) {
+    const col = document.createElement("div"); col.className = "edcol";
+    col.append(Object.assign(document.createElement("h4"), { textContent: c.label }));
+    const opts = col;
+    for (const n of c.names) {
+      const h = map[n], display = state.plugNames[h] || n;
+      const rank = ed.picks.findIndex(x => norm(x) === n);
+      const o = document.createElement("div");
+      o.className = "edopt" + (rank >= 0 ? " picked" : "") + (rank >= 0 && rank < 2 ? " top" : "");
+      o.title = display;
+      if (state.plugIcons[h]) { const img = document.createElement("img"); img.src = BUNGIE + state.plugIcons[h]; img.alt = display; o.append(img); }
+      else o.append(Object.assign(document.createElement("span"), { className: "ph", textContent: display.split(" ").map(w => w[0]).join("").slice(0, 3) }));
+      if (rank >= 0) o.append(Object.assign(document.createElement("span"), { className: "badge", textContent: rank + 1 }));
+      o.onclick = () => {
+        const i = ed.picks.findIndex(x => norm(x) === n);
+        if (i >= 0) ed.picks.splice(i, 1);
+        else if (ed.picks.length < 11) ed.picks.push(display);
+        else { log("A weapon can have at most 11 ranked perks."); return; }
+        edRender();
+      };
+      opts.append(o);
+    }
+    box.append(col);
+  }
+  const pts = i => (i === 0 ? 25 : i === 1 ? 20 : 9 - (i - 2));
+  $("edRank").innerHTML = ed.picks.length ? "" : '<span class="muted" style="border:none">No perks picked yet.</span>';
+  ed.picks.forEach((n, i) => $("edRank").append(Object.assign(document.createElement("span"), { textContent: `${i + 1}. ${n} (${pts(i)})` })));
+}
+
+function edRenderList() {
+  const mine = myList();
+  const names = Object.values(mine).map(e => e.name).sort();
+  $("edCount").textContent = names.length ? `· ${names.length} weapon${names.length === 1 ? "" : "s"}` : "· empty";
+  $("edList").innerHTML = "";
+  for (const n of names) {
+    const d = document.createElement("div");
+    d.textContent = `${n} — ${mine[norm(n)].prio.filter(Boolean).length} perks`;
+    d.onclick = () => { $("edSearch").value = n; busy(() => edOpen(n)); };
+    $("edList").append(d);
+  }
+}
+
+function edSaveList(mine) { store.set("d2v_mylist", mine); edRenderList(); }
+
+function wireEditor() {
+  $("edSearch").onchange = () => { const n = $("edSearch").value.trim(); if (n) busy(async () => { await loadDefs(); edNamesIndex(); await edOpen(n); }); };
+  $("edSearch").onfocus = () => { if (state.defs) edNamesIndex(); };
+  $("edVersion").onchange = () => { ed.hash = Number($("edVersion").value); busy(edLoadPool); };
+  $("edClear").onclick = () => { ed.picks = []; edRender(); };
+  $("edSave").onclick = () => {
+    if (!ed.name) return;
+    if (!ed.picks.length) { log("Pick at least one perk before saving."); return; }
+    const mine = myList();
+    mine[norm(ed.name)] = { name: ed.name, prio: Array.from({ length: 11 }, (_, k) => ed.picks[k] || "") };
+    edSaveList(mine);
+    log(`Saved ${ed.name} to your list (${ed.picks.length} perks). Scan again to use it.`);
+  };
+  $("edRemove").onclick = () => {
+    if (!ed.name) return;
+    const mine = myList();
+    delete mine[norm(ed.name)];
+    edSaveList(mine);
+    log(`Removed ${ed.name} from your list.`);
+  };
+  $("edImport").onclick = () => {
+    const sheet = state.sheetTiers || {};
+    const mine = myList();
+    let n = 0;
+    for (const rows of Object.values(sheet)) { const r = rows[0]; if (!mine[norm(r.name)]) { mine[norm(r.name)] = { name: r.name, prio: r.prio }; n++; } }
+    edSaveList(mine);
+    log(`Copied ${n} weapons from the sheet into your list (weapons you already had were left alone).`);
+  };
+  $("edExport").onclick = () => {
+    const mine = myList();
+    const q = v => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const lines = ["Weapon," + Array.from({ length: 11 }, (_, k) => "Priority " + (k + 1)).join(",")];
+    for (const e of Object.values(mine).sort((a, b) => a.name.localeCompare(b.name))) lines.push([e.name, ...e.prio].map(v => q(v || "")).join(","));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+    a.download = "weapon-list.csv";
+    a.click();
+  };
+  $("edWipe").onclick = () => { if (confirm("Delete your whole list from this browser?")) { edSaveList({}); log("Your list was deleted."); } };
+  const saved = store.get("d2v_useMine");
+  if (saved != null) $("useMine").checked = saved;
+  $("useMine").onchange = () => store.set("d2v_useMine", $("useMine").checked);
+  edRenderList();
+}
 
 /* ==================== DIM EXPORT INPUT (dev) ==================== */
 const csvText = { weapons: null, armor: null };
@@ -1427,12 +1668,22 @@ async function scan() {
   store.set("d2v_tiered_url", $("tieredUrl").value.trim());
   const tiers = await loadTiered();
   await loadDefs();
-  if (!csvText.weapons) throw new Error("Load your DIM weapons export first.");
-  log("Reading the DIM weapons export…");
-  const weapons = weaponsFromCSV(csvText.weapons);
-  state.results = score(weapons, tiers);
-  try { await loadWeaponPools(weapons); } catch (e) { log("Couldn't read perk pools: " + e.message); }
-  weapons.forEach(buildSockets);
+  let weapons;
+  if (state.source === "vault") {
+    if (!state.token) throw new Error("Not signed in. Sign in on the vault page (vault.html) in this browser, then come back.");
+    if (!state.membership) await loadMembership();
+    log("Reading your vault…");
+    weapons = await loadWeapons();
+    state.results = score(weapons, tiers);
+    try { await loadWeaponPools(weapons); } catch (e) { log("Couldn't read perk pools: " + e.message); }
+  } else {
+    if (!csvText.weapons) throw new Error("Load a DIM weapons export first.");
+    log("Reading the DIM weapons export…");
+    weapons = weaponsFromCSV(csvText.weapons);
+    state.results = score(weapons, tiers);
+    try { await loadWeaponPools(weapons); } catch (e) { log("Couldn't read perk pools: " + e.message); }
+    weapons.forEach(buildSockets);
+  }
   perkPools(weapons);
   log(`Scored ${weapons.length} legendary weapons; ${weapons.filter(w => w.junk).length} junk.`);
   render();
@@ -1440,7 +1691,7 @@ async function scan() {
 }
 
 function wire() {
-  $("btnSignIn").onclick = () => {};
+  $("btnSignIn").onclick = () => { location.href = "vault.html"; };
   $("btnSignOut").onclick = () => {};
   $("btnScan").onclick = () => busy(scan);
   $("btnCopy").onclick = async () => {
@@ -1467,12 +1718,15 @@ function wire() {
   $("armorUrl").value = store.get("d2v_armor_url") === ARMOR_CSV ? "" : (store.get("d2v_armor_url") || "");
   if (ARMOR_CSV) $("armorUrl").placeholder = "Leave empty to use the built-in armor list";
   const page = p => {
-    $("pageWeapons").hidden = p !== "weapons"; $("pageArmor").hidden = p !== "armor";
-    $("pageTabWeapons").classList.toggle("on", p === "weapons"); $("pageTabArmor").classList.toggle("on", p === "armor");
+    $("pageWeapons").hidden = p !== "weapons"; $("pageArmor").hidden = p !== "armor"; $("pageEditor").hidden = p !== "editor";
+    $("pageTabWeapons").classList.toggle("on", p === "weapons"); $("pageTabArmor").classList.toggle("on", p === "armor"); $("pageTabEditor").classList.toggle("on", p === "editor");
+    if (p === "editor" && state.defs) edNamesIndex();
     store.set("d2v_page", p);
   };
   $("pageTabWeapons").onclick = () => page("weapons");
   $("pageTabArmor").onclick = () => page("armor");
+  $("pageTabEditor").onclick = () => page("editor");
+  wireEditor();
   page(store.get("d2v_page") || "weapons");
   state.armorView = "junk";
   for (const [id, v] of [["armorTabJunk", "junk"], ["armorTabKeep", "keep"], ["armorTabAll", "all"]]) {
@@ -1501,7 +1755,10 @@ async function init() {
   wire();
   if (!CONFIG.apiKey || CONFIG.apiKey.startsWith("PASTE")) { $("setup").hidden = false; return; }
   $("app").hidden = false;
-  $("account").textContent = "DIM export";
+  // Your vault, using the sign-in saved by the vault page on this site (same browser).
+  const t = store.get("d2v_token");
+  if (t && t.expires > Date.now()) state.token = t;
+  $("vaultStatus").innerHTML = state.token ? "(signed in)" : '(not signed in — <a href="vault.html" style="color:var(--accent)">sign in on the vault page</a>, then reload)';
   for (const kind of ["weapons", "armor"]) {
     const saved = (() => { try { return localStorage.getItem("d2v_dev_" + kind); } catch { return null; } })();
     if (saved) csvText[kind] = saved;
@@ -1512,10 +1769,25 @@ async function init() {
       csvText[kind] = await f.text();
       try { localStorage.setItem("d2v_dev_" + kind, csvText[kind]); } catch { log(`The ${kind} export is too big to remember; load it again next time.`); }
       fileStatus();
+      setSource("export");
     };
   }
   fileStatus();
-  if (csvText.weapons) await busy(scan);
+  // Default to your vault when signed in; otherwise the last export, if any.
+  setSource(state.token ? "vault" : (csvText.weapons ? "export" : "vault"), false);
+  $("srcVault").onchange = () => setSource("vault");
+  $("srcExport").onchange = () => setSource("export");
+  if (state.token || csvText.weapons) await busy(scan);
+}
+
+function setSource(src, rescan = true) {
+  state.source = src;
+  $("srcVault").checked = src === "vault";
+  $("srcExport").checked = src === "export";
+  $("exportBox").hidden = src !== "export";
+  $("fileStatus").hidden = src !== "export";
+  $("account").textContent = src === "vault" ? (state.membership?.name || "My vault") : "DIM export";
+  if (rescan && (src === "export" ? csvText.weapons : state.token)) busy(scan);
 }
 function fileStatus() {
   const n = t => (t ? Math.max(0, parseCSV(t).length - 1) : 0);
