@@ -542,8 +542,23 @@ async function loadSources() {
   if (state.sourceOf) return;
   log("Downloading Collections sources…");
   const raw = await (await fetch(BUNGIE + state.manifestPaths.DestinyCollectibleDefinition)).json();
-  state.sourceOf = Object.fromEntries(Object.entries(raw).map(([h, d]) => [h, d.sourceString || ""]));
+  // By collectible, by item hash and by item name (reissued copies have new hashes but the same name).
+  state.sourceOf = {}; state.sourceByItem = {}; state.sourceByName = {};
+  for (const [h, d] of Object.entries(raw)) {
+    const src = d.sourceString || "";
+    state.sourceOf[h] = src;
+    if (d.itemHash) state.sourceByItem[d.itemHash] = src;
+    const n = norm(d.displayProperties?.name || "");
+    if (n && src && !state.sourceByName[n]) state.sourceByName[n] = src;
+  }
 }
+
+/* Raids by name: Collections often names the raid without the word "raid" (e.g. "Source: Root of Nightmares"). */
+const RAID_NAMES = ["raid", "leviathan", "eater of worlds", "spire of stars", "last wish", "scourge of the past", "crown of sorrow",
+  "garden of salvation", "deep stone crypt", "vault of glass", "vow of the disciple", "king's fall", "root of nightmares",
+  "crota's end", "salvation's edge", "desert perpetual", "pantheon"];
+const isRaidSource = src => { const t = norm(src); return !!t && RAID_NAMES.some(r => t.includes(r)); };
+const armorSource = a => state.sourceOf?.[a.def.coll] || state.sourceByItem?.[a.hash] || state.sourceByName?.[norm(a.def.name)] || "";
 
 async function loadSets() {
   if (state.setOf) return;
@@ -978,7 +993,7 @@ function renderArmor() {
     sub.textContent = (a.junk ? "Junk — " : "") + a.why;
     tdN.append(sub);
     const tdD = document.createElement("td"); tdD.className = "perks";
-    tdD.textContent = [["Titan", "Hunter", "Warlock"][a.def.cls], SLOT[a.def.bucket], a.set || "no set", a.archetype || "no archetype", a.tertiary && a.tertiary + " tertiary", a.tuning && a.tuning + " tuning"].filter(Boolean).join(" · ");
+    tdD.textContent = [["Titan", "Hunter", "Warlock"][a.def.cls], SLOT[a.def.bucket], a.set || (a.oldRaid ? "old raid armor" : "no set"), a.archetype || "no archetype", a.tertiary && a.tertiary + " tertiary", a.tuning && a.tuning + " tuning"].filter(Boolean).join(" · ");
     const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = a.where;
     tr.append(tdI, tdN, tdD, tdW);
     tb.append(tr);
@@ -997,7 +1012,7 @@ async function scanArmor() {
   // Old raid armor: from a raid (Collections source) and from before archetypes.
   try {
     await loadSources();
-    for (const a of armor) a.oldRaid = !a.archetype && /\braid\b/i.test(state.sourceOf[a.def.coll] || "");
+    for (const a of armor) { a.source = armorSource(a); a.oldRaid = !a.archetype && isRaidSource(a.source); }
     log(`Armor: ${armor.filter(a => a.oldRaid).length} old raid pieces.`);
   } catch (e) { log("Couldn't read armor sources: " + e.message); }
   const n = armor.filter(a => a.archetype).length;
