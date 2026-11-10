@@ -306,10 +306,11 @@ async function loadDefs() {
   state.manifestPaths = man.jsonWorldComponentContentPaths.en;
   log("Downloading item definitions…");
   const raw = await (await fetch(BUNGIE + man.jsonWorldComponentContentPaths.en.DestinyInventoryItemLiteDefinition)).json();
-  const defs = {}, plugs = {}, armorDefs = {}, plugInfo = {}, icons = {}, nameIcon = {};
+  const defs = {}, plugs = {}, armorDefs = {}, plugInfo = {}, icons = {}, nameIcon = {}, types = {};
   for (const [h, d] of Object.entries(raw)) {
     // Every item's name: perks are items too, and the light item list doesn't always include their plug details.
     if (d.displayProperties?.name) plugs[h] = d.displayProperties.name;
+    if (d.itemTypeDisplayName) types[h] = d.itemTypeDisplayName;
     if (d.displayProperties?.icon) { icons[h] = d.displayProperties.icon;
       const n = norm(d.displayProperties.name || "");
       if (n && !nameIcon[n] && /trait|barrel|magazine|perk|origin|scope|sight|blade|guard|bowstring|arrow|haft|battery|grip|stock|launcher|tube|rail/i.test(d.itemTypeDisplayName || "")) nameIcon[n] = d.displayProperties.icon; }
@@ -324,6 +325,7 @@ async function loadDefs() {
   state.defs = defs;
   state.plugNames = plugs;
   state.plugIcons = icons;
+  state.plugTypes = types;
   state.nameIcon = nameIcon;
   state.armorDefs = armorDefs;
   state.plugInfo = plugInfo;
@@ -439,19 +441,55 @@ const PERK_COLS = [
 ];
 
 /* For each column: the wanted perks, and what this copy has in the matching socket. */
-/* The weapon's perk sockets, in order (barrel, magazine, trait, trait, origin on most weapons): sockets past the frame
-   whose options look like perks (not trackers, shaders, masterworks, or mod sockets that list every mod). */
+/* Perk sockets are recognized by their plugs' item type (Barrel, Magazine, Trait, Enhanced Trait, Origin Trait, Blade,
+   Guard, Bowstring, Arrow, Battery, Scope, Stock…), so shaders, mods, ornaments, trackers and masterworks are never mistaken for perks. */
+const PERK_TYPE = /barrel|magazine|trait|scope|sight|blade|guard|bowstring|arrow|battery|grip|stock|launcher|tube|haft|rail|bolt/i;
+const NOT_PERK_TYPE = /shader|ornament|tracker|masterwork|mod\b|memento|catalyst|intrinsic|transmat|emblem|projection/i;
+const plugType = h => state.plugTypes?.[h] || "";
+const isPerkPlug = h => PERK_TYPE.test(plugType(h)) && !NOT_PERK_TYPE.test(plugType(h));
+
+/* The five columns on this copy: barrel-like, magazine-like, trait 1, trait 2, origin (any may be missing). */
 function perkSockets(w) {
-  const pn = h => state.plugNames[h] || "";
-  const NOT_PERK = /tracker|shader|ornament|masterwork|memento|empty|default|catalyst|upgrade|deepsight|level boost|mod socket|weapon mod|^tier \d/i;
-  return w.sockets
-    .filter(s => s.idx > 0 && s.options.length <= 15 && s.options.some(h => pn(h) && !NOT_PERK.test(pn(h))))
-    .sort((a, b) => a.idx - b.idx)
-    .slice(0, 5);
+  const socks = w.sockets.filter(s => s.idx > 0 && s.options.some(isPerkPlug)).sort((a, b) => a.idx - b.idx);
+  const kind = s => s.options.some(h => /origin/i.test(plugType(h))) ? "origin" : s.options.some(h => /trait/i.test(plugType(h))) ? "trait" : "part";
+  const parts = socks.filter(s => kind(s) === "part"), traits = socks.filter(s => kind(s) === "trait"), origin = socks.find(s => kind(s) === "origin");
+  return [parts[0] || null, parts[1] || null, traits[0] || null, traits[1] || null, origin || null];
 }
 
-/* Which socket each wanted perk lives in, learned from every copy you own (so the list's order doesn't matter —
-   e.g. Refurbished A499 lists trait 2 and the origin trait first). Perks no copy has rolled fall back to their usual column. */
+/* Every perk each socket can roll, from Bungie's item and plug set definitions (cached per game update). */
+async function loadWeaponPools(weapons) {
+  const key = "d2v_wpools_" + state.manifestVersion;
+  const cache = state.weaponPools ||= (store.get(key) || {});
+  const hashes = [...new Set(weapons.filter(w => w.tier).map(w => w.hash))].filter(h => !(h in cache));
+  if (!hashes.length) return;
+  log(`Reading perk pools for ${hashes.length} weapons (once per game update)…`);
+  if (!state.plugSets) {
+    try { state.plugSets = await (await fetch(BUNGIE + state.manifestPaths.DestinyPlugSetDefinition)).json(); }
+    catch (e) { log("Couldn't download plug sets: " + e.message); state.plugSets = {}; }
+  }
+  const setNames = ps => (state.plugSets[ps]?.reusablePlugItems || []).map(p => norm(state.plugNames[p.plugItemHash] || "")).filter(Boolean);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(6, hashes.length) }, async () => {
+    while (i < hashes.length) {
+      const h = hashes[i++];
+      try {
+        const d = await bungie(`/Destiny2/Manifest/DestinyInventoryItemDefinition/${h}/`);
+        const pools = {};
+        (d.sockets?.socketEntries || []).forEach((e, idx) => {
+          const names = new Set([...setNames(e.randomizedPlugSetHash), ...setNames(e.reusablePlugSetHash),
+            ...(e.reusablePlugItems || []).map(p => norm(state.plugNames[p.plugItemHash] || "")), norm(state.plugNames[e.singleInitialItemHash] || "")]);
+          names.delete("");
+          if (names.size) pools[idx] = [...names];
+        });
+        cache[h] = pools;
+      } catch (e) { cache[h] = null; }
+    }
+  }));
+  for (const k of Object.keys(localStorage)) if (k.startsWith("d2v_wpools_") && k !== key) store.del(k);
+  store.set(key, cache);
+}
+
+/* Fallback pools: perks seen on your own copies, by socket. */
 function perkPools(weapons) {
   const pools = {};
   for (const w of weapons) {
@@ -460,12 +498,6 @@ function perkPools(weapons) {
     for (const s of w.sockets) for (const h of s.options) { const n = norm(state.plugNames[h] || ""); if (n) (pool[s.idx] ||= new Set()).add(n); }
   }
   state.perkPools = pools;
-  // Across all your weapons: which position (barrel, mag, trait, trait, origin) each perk usually sits in.
-  const counts = {};
-  for (const w of weapons) perkSockets(w).forEach((sock, pos) => {
-    for (const h of sock.options) { const n = norm(state.plugNames[h] || ""); if (n) ((counts[n] ||= [0, 0, 0, 0, 0])[pos]++); }
-  });
-  state.perkPos = Object.fromEntries(Object.entries(counts).map(([n, c]) => [n, c.indexOf(Math.max(...c))]));
 }
 
 function perkColumns(w) {
@@ -473,29 +505,22 @@ function perkColumns(w) {
   if (!t) return null;
   const pn = h => state.plugNames[h] || "";
   const socks = perkSockets(w);
-  const pool = state.perkPools?.[norm(baseName(w.def.name))] || {};
-  const ROLE_OF = {}; // priority index -> usual column position
+  const bungiePool = state.weaponPools?.[w.hash] || null;
+  const ownPool = state.perkPools?.[norm(baseName(w.def.name))] || {};
+  const ROLE_OF = {}; // priority index -> column the sheet implies
   PERK_COLS.forEach((c, pos) => { ROLE_OF[c.top] = pos; for (const a of c.alts) ROLE_OF[a] = pos; });
-  const cols = socks.map((sock, pos) => ({ col: PERK_COLS[pos] || { label: "Perk " + (pos + 1) }, sock, wanted: [] }));
-  // Wanted perks in priority order (Priority 1 first), each placed in the socket where it's found on your copies.
+  const cols = PERK_COLS.map((c, pos) => ({ col: c, sock: socks[pos], wanted: [] }));
+  // Wanted perks in priority order, placed where they can roll: Bungie's pool, else your copies, else the sheet's column.
   for (let k = 0; k < 11; k++) {
     const name = t.prio[k];
     if (!name) continue;
-    let c = cols.find(x => pool[x.sock.idx]?.has(norm(name)));
-    if (!c && state.perkPos?.[norm(name)] != null) c = cols[state.perkPos[norm(name)]];
+    const n = norm(name);
+    let c = bungiePool && cols.find(x => x.sock && bungiePool[x.sock.idx]?.includes(n));
+    if (!c) c = cols.find(x => x.sock && ownPool[x.sock.idx]?.has(n));
     if (!c) c = cols[ROLE_OF[k]];
     if (c) c.wanted.push(name);
   }
-  return cols.map(c => {
-    const top = c.wanted[0] || "", alts = c.wanted.slice(1);
-    const topH = c.sock.options.find(h => top && norm(pn(h)) === norm(top));
-    const altH = c.sock.options.find(h => alts.some(a => norm(a) === norm(pn(h))));
-    let status, shown;
-    if (topH) { status = "ok"; shown = topH; }
-    else if (altH) { status = "alt"; shown = altH; }
-    else { status = top ? "bad" : "none"; shown = c.sock.plugged || c.sock.options[0]; }
-    return { col: c.col, top, alts, sock: c.sock, status, shown };
-  });
+  return cols.map(c => ({ col: c.col, sock: c.sock, top: c.wanted[0] || "", alts: c.wanted.slice(1) }));
 }
 
 function perkTile(cls, icon, title, fallback = "") {
@@ -634,11 +659,15 @@ function render() {
       // Has: what this copy has in each column (every option, if the socket has more than one).
       grid.append(Object.assign(document.createElement("span"), { className: "rl", textContent: "Has" }));
       for (const c of cols) {
+        if (!c.sock) { grid.append(group([perkTile("none", "", "This weapon has no socket for this", "–")])); continue; }
         const opts = c.sock.options.length ? c.sock.options : [c.sock.plugged];
-        const wantedAny = !!(c.top || c.alts.length);
+        const wanted = [c.top, ...c.alts].filter(Boolean).map(norm);
+        const have = new Set(opts.map(h => norm(pn(h))));
+        // Red only while a wanted perk is still missing from this column; once all are here, extras are left alone.
+        const allCovered = wanted.length && wanted.every(n => have.has(n));
         grid.append(group(opts.map(h => {
           const n = norm(pn(h));
-          const cls = !wantedAny ? "none" : n === norm(c.top) ? "ok" : c.alts.some(a => norm(a) === n) ? "alt" : "bad";
+          const cls = !wanted.length ? "none" : n === norm(c.top) ? "ok" : c.alts.some(a => norm(a) === n) ? "alt" : allCovered ? "none" : "bad";
           return perkTile(cls, state.plugIcons[h], pn(h), pn(h)[0] || "?");
         })));
       }
@@ -1268,6 +1297,7 @@ async function scan() {
   const weapons = await loadWeapons();
   state.results = score(weapons, tiers);
   perkPools(weapons);
+  try { await loadWeaponPools(weapons); } catch (e) { log("Couldn't read perk pools: " + e.message); }
   log(`Scored ${weapons.length} legendary weapons; ${weapons.filter(w => w.junk).length} junk.`);
   render();
   try { await scanArmor(); } catch (e) { log("Armor error: " + e.message); }
