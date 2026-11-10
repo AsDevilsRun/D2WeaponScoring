@@ -44,8 +44,30 @@
   .filter { max-width:260px; }
   .pagetabs { display:flex; gap:6px; margin-bottom:14px; }
   .pagetabs button.on { border-color:var(--accent); color:var(--accent); }
-  .targets { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:10px; margin-bottom:12px; }
-  .target { border:1px solid var(--line); border-radius:6px; padding:8px 10px; font-size:13px; }
+  :root { --warn:#e0b54a; }
+  .classcols { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-bottom:16px; }
+  @media (max-width:900px){ .classcols { grid-template-columns:1fr; } }
+  .classcol h3 { margin:0 0 8px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+  .target { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .target-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:8px; }
+  .target-head b { font-size:14px; }
+  .counts { font-size:12px; white-space:nowrap; }
+  .counts .good, .counts .warn { font-weight:700; }
+  .warn { color:var(--warn); }
+  .slots { display:flex; gap:6px; margin-bottom:4px; }
+  .slot { position:relative; width:44px; height:44px; border-radius:6px; border:2px solid var(--line); overflow:hidden; background:#0d0f12; flex:none; }
+  .slot img { width:100%; height:100%; display:block; }
+  .slot::after { content:""; position:absolute; inset:0; pointer-events:none; }
+  .slot.ok { border-color:var(--good); } .slot.ok::after { background:rgba(108,194,138,.18); }
+  .slot.part { border-color:var(--warn); } .slot.part::after { background:rgba(224,181,74,.25); }
+  .slot.miss { border-color:var(--bad); border-style:dashed; } .slot.miss::after { background:rgba(224,108,108,.12); }
+  .slot .lbl { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--bad); font-weight:600; }
+  .issues { list-style:none; margin:6px 0 0; padding:0; font-size:12px; }
+  .issues li { padding:1px 0; }
+  .issues li.part { color:var(--warn); }
+  .issues li.miss { color:var(--bad); }
+  .spares { font-size:11px; color:var(--dim); margin-top:4px; }
+  td img.st-junk { outline:2px solid var(--bad); } td img.st-part { outline:2px solid var(--warn); } td img.st-ok { outline:2px solid var(--good); }
 </style>
 </head>
 <body>
@@ -121,13 +143,18 @@
       <div class="rules">
         <label><input type="checkbox" id="optArmorUnlisted" checked> Armor from sets not on the list is junk</label>
         <label><input type="checkbox" id="optArmorLocked"> Never mark locked armor as junk</label>
+        <label><input type="checkbox" id="optArmorOldRaid" checked> Never mark old raid armor as junk</label>
       </div>
       <div id="armorNote" class="muted" style="margin-top:8px" hidden>Add your armor list link to check armor.</div>
     </div>
 
     <div class="card" id="armorResults" hidden>
       <h2>Sets</h2>
-      <div class="targets" id="armorTargets"></div>
+      <div class="classcols">
+        <div class="classcol"><h3>Hunter</h3><div id="armorCol1"></div></div>
+        <div class="classcol"><h3>Titan</h3><div id="armorCol0"></div></div>
+        <div class="classcol"><h3>Warlock</h3><div id="armorCol2"></div></div>
+      </div>
       <h2>Results</h2>
       <div class="stats" id="armorStats"></div>
       <div class="controls">
@@ -263,7 +290,7 @@ async function loadDefs() {
       defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "" };
     }
     if (d.itemType === 2 && d.inventory) {
-      armorDefs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, cls: d.classType, bucket: d.inventory.bucketTypeHash };
+      armorDefs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, cls: d.classType, bucket: d.inventory.bucketTypeHash, coll: d.collectibleHash || 0 };
     }
     if (d.plug && d.investmentStats) plugInfo[h] = slimArmorPlug(d);
   }
@@ -509,6 +536,14 @@ const slimArmorPlug = d => ({
   inv: (d.investmentStats || []).filter(s => STAT_NAME[s.statTypeHash] && s.value).map(s => [s.statTypeHash, s.value]),
 });
 const armorPlug = h => state.plugInfo[h] || state.plugCache?.[h] || null;
+
+/* Where each armor piece comes from (Collections source text), to spot raid armor. Downloaded once per session. */
+async function loadSources() {
+  if (state.sourceOf) return;
+  log("Downloading Collections sources…");
+  const raw = await (await fetch(BUNGIE + state.manifestPaths.DestinyCollectibleDefinition)).json();
+  state.sourceOf = Object.fromEntries(Object.entries(raw).map(([h, d]) => [h, d.sourceString || ""]));
+}
 
 async function loadSets() {
   if (state.setOf) return;
@@ -765,7 +800,7 @@ function solveGroup(targets, pieces, prefSets) {
 }
 
 function knockout(armor, list) {
-  const opt = { unlisted: $("optArmorUnlisted").checked, locked: $("optArmorLocked").checked };
+  const opt = { unlisted: $("optArmorUnlisted").checked, locked: $("optArmorLocked").checked, oldRaid: $("optArmorOldRaid").checked };
   const targets = [], problems = [];
   const groups = {};
   for (const row of list) {
@@ -844,6 +879,7 @@ function knockout(armor, list) {
     a.why = listed ? "not needed for your " + listed + " set" : (a.set ? `${["Titan", "Hunter", "Warlock"][a.def.cls] || ""} ${a.set} isn't on your list`.trim() : "not part of a set");
     if (!a.archetype) a.why += " · no archetype (old armor)";
     if (a.junk && opt.locked && a.locked) { a.junk = false; a.why += " · kept: locked"; }
+    if (a.junk && opt.oldRaid && a.oldRaid) { a.junk = false; a.why += " · kept: old raid armor"; }
   }
   state.armorTargets = targets;
   return armor;
@@ -859,38 +895,81 @@ function renderArmor() {
   }
   $("armorQuery").value = junk.length ? `-tag:keep (${junk.map(a => "id:" + a.id).join(" OR ")})` : "";
 
-  const tw = $("armorTargets");
-  tw.innerHTML = "";
+  const SLOT_ORDER = [3448274439, 3551918588, 14239492, 20886954, 1585787867];
+  const SLOT_SHORT = { 3448274439: "Helm", 3551918588: "Arms", 14239492: "Chest", 20886954: "Legs", 1585787867: "Class" };
+  const wantText = row => [row.archetype || "any archetype", row.tertiary && `${row.tertiary} tertiary`, row.tuning && `${row.tuning} tuning`].filter(Boolean).join(" · ");
+  for (const c of [0, 1, 2]) $("armorCol" + c).innerHTML = "";
   for (const t of state.armorTargets || []) {
+    const picks = t.result.picks;
+    const perfect = picks.filter(p => p.piece && !fitGaps(p.piece, p.row).length).length;
+    const have = picks.filter(p => p.piece).length;
     const box = document.createElement("div");
     box.className = "target";
-    const filled = t.result.picks.filter(p => p.piece && !fitGaps(p.piece, p.row).length).length;
-    const h = document.createElement("div");
-    h.innerHTML = `<b>${["Titan", "Hunter", "Warlock"][t.cls]} · ${targetName(t)}${t.n > 1 ? " #" + t.n : ""}</b> <span class="${filled === t.rows.length ? "good" : "muted"}">${filled} / ${t.rows.length}</span>` +
-      (t.spares ? ` <span class="muted">· ${t.spares} spare${t.spares > 1 ? "s" : ""}</span>` : "");
-    box.append(h);
-    for (const p of t.result.picks) {
-      const d = document.createElement("div");
-      d.className = p.piece ? "" : "muted";
-      const want = [p.row.archetype || "any archetype", p.row.tertiary && `${p.row.tertiary} tertiary`, p.row.tuning && `${p.row.tuning} tuning`].filter(Boolean).join(" · ");
-      const gaps = p.piece ? fitGaps(p.piece, p.row) : [];
-      d.className = !p.piece ? "muted" : gaps.length ? "" : "good";
-      d.textContent = p.piece ? `${gaps.length ? "~" : "✓"} ${SLOT[p.slot]}: ${want}${gaps.length ? " — has " + gaps.join(", ") : ""}` : `✗ missing: ${want}`;
-      box.append(d);
+    const head = document.createElement("div");
+    head.className = "target-head";
+    const title = document.createElement("b");
+    title.textContent = targetName(t) + (t.n > 1 ? " #" + t.n : "");
+    const counts = document.createElement("span");
+    counts.className = "counts";
+    counts.innerHTML = `<span class="good" title="Perfect">${perfect}/${picks.length}</span> &nbsp;<span class="warn" title="Perfect + partial">${have}/${picks.length}</span>`;
+    head.append(title, counts);
+    box.append(head);
+    // Slots in order; unfilled rows go to the empty slots.
+    const bySlot = Object.fromEntries(picks.filter(p => p.piece).map(p => [p.slot, p]));
+    const missingRows = picks.filter(p => !p.piece).map(p => p.row);
+    const tiles = document.createElement("div");
+    tiles.className = "slots";
+    const issues = document.createElement("ul");
+    issues.className = "issues";
+    const missing = new Map(); // want text -> slots
+    for (const s of SLOT_ORDER) {
+      const p = bySlot[s];
+      const tile = document.createElement("div");
+      if (p) {
+        const gaps = fitGaps(p.piece, p.row);
+        tile.className = "slot " + (gaps.length ? "part" : "ok");
+        const img = document.createElement("img");
+        img.src = BUNGIE + p.piece.def.icon; img.alt = "";
+        tile.append(img);
+        tile.title = `${SLOT[s]}: ${p.piece.archetype || "no archetype"} · ${p.piece.tertiary || "?"} tertiary · ${p.piece.tuning || "no"} tuning`;
+        if (gaps.length) { const li = document.createElement("li"); li.className = "part"; li.textContent = `${SLOT[s]}: ${gaps.join(", ")}`; issues.append(li); }
+      } else {
+        const row = missingRows.shift();
+        if (!row) continue; // fewer than 5 rows on the list
+        tile.className = "slot miss";
+        tile.innerHTML = `<span class="lbl">${SLOT_SHORT[s]}</span>`;
+        tile.title = `${SLOT[s]}: missing`;
+        const w = wantText(row);
+        missing.set(w, [...(missing.get(w) || []), SLOT[s]]);
+      }
+      tiles.append(tile);
     }
-    tw.append(box);
+    box.append(tiles);
+    for (const [w, slotsMissing] of missing) {
+      const li = document.createElement("li"); li.className = "miss";
+      li.textContent = `Missing ${slotsMissing.length === 5 ? "all 5" : slotsMissing.join(", ")}: ${w}`;
+      issues.append(li);
+    }
+    if (issues.children.length) box.append(issues);
+    if (t.spares) { const sp = document.createElement("div"); sp.className = "spares"; sp.textContent = `${t.spares} spare${t.spares > 1 ? "s" : ""} kept until this set is perfect`; box.append(sp); }
+    $("armorCol" + t.cls).append(box);
   }
 
   const f = norm($("armorFilter").value || "");
   let rows = state.armorView === "junk" ? junk : state.armorView === "keep" ? all.filter(a => !a.junk) : all;
   if (f) rows = rows.filter(a => norm(a.def.name + " " + a.set).includes(f));
-  rows = rows.slice().sort((x, y) => (x.def.cls - y.def.cls) || x.set.localeCompare(y.set) || (Number(Object.keys(SLOT).indexOf(String(x.def.bucket))) - Number(Object.keys(SLOT).indexOf(String(y.def.bucket)))));
+  const CLASS_ORDER = { 1: 0, 0: 1, 2: 2 };
+  rows = rows.slice().sort((x, y) => (CLASS_ORDER[x.def.cls] - CLASS_ORDER[y.def.cls]) || x.set.localeCompare(y.set) || (SLOT_ORDER.indexOf(x.def.bucket) - SLOT_ORDER.indexOf(y.def.bucket)));
   const tb = $("armorRows");
   tb.innerHTML = "";
   for (const a of rows) {
     const tr = document.createElement("tr");
     const tdI = document.createElement("td");
-    if (a.def.icon) { const img = document.createElement("img"); img.src = BUNGIE + a.def.icon; img.alt = ""; tdI.append(img); }
+    if (a.def.icon) {
+      const img = document.createElement("img"); img.src = BUNGIE + a.def.icon; img.alt = "";
+      img.className = a.junk ? "st-junk" : (a.gaps && a.gaps.length ? "st-part" : "st-ok");
+      tdI.append(img);
+    }
     const tdN = document.createElement("td");
     tdN.textContent = a.def.name;
     if (a.locked) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "locked" }));
@@ -915,6 +994,12 @@ async function scanArmor() {
   const armor = readArmor();
   await ensurePlugInfo(armor.flatMap(a => a.plugged).filter(Boolean));
   armor.forEach(describeArmor);
+  // Old raid armor: from a raid (Collections source) and from before archetypes.
+  try {
+    await loadSources();
+    for (const a of armor) a.oldRaid = !a.archetype && /\braid\b/i.test(state.sourceOf[a.def.coll] || "");
+    log(`Armor: ${armor.filter(a => a.oldRaid).length} old raid pieces.`);
+  } catch (e) { log("Couldn't read armor sources: " + e.message); }
   const n = armor.filter(a => a.archetype).length;
   log(`Armor: ${armor.length} legendary pieces, ${n} with an archetype, ${armor.filter(a => a.tertiary).length} with a tertiary stat, ${armor.filter(a => a.tuning).length} with tuning, ${armor.filter(a => a.set).length} in a set.`);
   state.armorList = list;
@@ -986,7 +1071,7 @@ function wire() {
     try { await navigator.clipboard.writeText($("armorQuery").value); log("Armor DIM search copied."); }
     catch { $("armorQuery").select(); log("Clipboard blocked; text selected for manual copy."); }
   };
-  for (const id of ["optArmorUnlisted", "optArmorLocked"]) {
+  for (const id of ["optArmorUnlisted", "optArmorLocked", "optArmorOldRaid"]) {
     const saved = store.get("d2v_" + id);
     if (saved != null) $(id).checked = saved;
     $(id).onchange = () => { store.set("d2v_" + id, $(id).checked); if (state.armorResults && state.armorList) { knockout(state.armorResults, state.armorList); renderArmor(); } };
