@@ -58,6 +58,15 @@
   .advmenu { position:absolute; right:0; top:100%; z-index:5; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px; white-space:nowrap; }
   .edbody { display:flex; gap:20px; align-items:flex-start; }
   .edcols { display:flex; gap:14px; margin:6px 0 14px; align-items:flex-start; flex:none; }
+  .edside { flex:none; width:250px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .edside h4 { margin:0 0 8px; font-size:11px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.08em; }
+  .vrow { display:flex; align-items:center; gap:10px; padding:5px 6px; border-radius:6px; cursor:pointer; border:1px solid transparent; }
+  .vrow:hover { border-color:var(--line); }
+  .vrow.on { background:var(--card); border-color:var(--line); }
+  .vrow img { width:34px; height:34px; border-radius:3px; }
+  .vrow .vn { flex:1; font-size:13px; }
+  .vrow .own { color:var(--accent); font-size:11px; }
+  .vrow .ss { font-size:11px; color:#e0b54a; border:1px solid rgba(224,181,74,.4); background:rgba(224,181,74,.12); border-radius:4px; padding:1px 6px; }
   .edhero { flex:1; min-width:260px; align-self:stretch; min-height:300px; position:relative; overflow:hidden; border-radius:8px; }
   /* Bungie's screenshot has a scene behind the weapon, so it is faded into the page with a radial mask instead of a true cut-out. */
   .edhero img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center;
@@ -229,11 +238,12 @@
         <select id="edVersion" hidden title="This weapon has more than one version"></select>
         <span class="muted" id="edInfo"></span>
       </div>
-      <div class="muted" style="font-size:12px;margin-bottom:8px">Click perks from most to least important (up to 11). Click again to remove. Shift-click a picked perk to move it up one place, Alt-click to move it down. Pick 1 = 25 points, pick 2 = 20, then 9, 8, 7, … down to 1.</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Click perks from most to least important (up to 11). Click again to remove. Shift-click a picked perk to move it up one place, Alt-click to move it down. Your first two picks matter most.</div>
       <div id="edHead" class="edhead" hidden></div>
       <div class="edbody">
         <div id="edPerks" class="edcols"></div>
         <div id="edHero" class="edhero" hidden></div>
+        <div id="edVersions" class="edside" hidden></div>
       </div>
       <div id="edRank" class="edrank"></div>
       <div class="controls" style="margin-top:10px">
@@ -319,7 +329,7 @@ const CONFIG = {
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 16:09";
+const BUILD = "2026-11-10 16:18";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -1442,16 +1452,18 @@ async function edOpen(name) {
   const idx = edNamesIndex();
   const hashes = idx[name];
   if (!hashes) { $("edInfo").textContent = "No legendary weapon by that name."; return; }
-  ed.name = name;
-  // Prefer a version you own; otherwise the first one.
+  ed.name = baseName(name); // one ranking per weapon, shared by its Adept/Timelost versions (as scoring groups them)
+  // Every version: same base name (Adept, Timelost and reissues included). Start on one you own, else the newest.
   const owned = new Set((state.results || []).map(w => w.hash));
-  const versions = hashes.slice().sort((a, b) => owned.has(b) - owned.has(a));
-  $("edVersion").hidden = versions.length < 2;
-  $("edVersion").innerHTML = versions.map((h, i) => `<option value="${h}">Version ${i + 1}${owned.has(h) ? " (you own)" : ""}</option>`).join("");
-  ed.hash = versions[0];
+  const base = norm(baseName(name));
+  ed.versions = Object.entries(idx).filter(([n]) => norm(baseName(n)) === base).flatMap(([, hs]) => hs);
+  await Promise.all(ed.versions.map(h => weaponMeta(h)));
+  const season = h => state.weaponMetaCache?.[h]?.season || 0;
+  ed.versions.sort((a, b) => season(b) - season(a));
+  ed.hash = hashes.find(h => owned.has(h)) || hashes.slice().sort((a, b) => season(b) - season(a))[0];
   // Start from your saved ranking, else the sheet's row.
-  const mine = myList()[norm(name)];
-  const sheet = state.sheetTiers?.[norm(name)]?.[0];
+  const mine = myList()[norm(ed.name)];
+  const sheet = state.sheetTiers?.[norm(ed.name)]?.[0];
   ed.picks = (mine?.prio || sheet?.prio || []).filter(Boolean);
   $("edInfo").textContent = mine ? "Editing your saved ranking." : sheet ? "Starting from the sheet's ranking." : "Not ranked yet.";
   await edLoadPool();
@@ -1466,13 +1478,23 @@ async function edLoadPool() {
 
 /* Screenshot and flavor text aren't in the light item list, so they come from the weapon's full definition (cached). */
 async function weaponMeta(hash) {
-  const key = "d2v_wmeta2_" + state.manifestVersion;
+  const key = "d2v_wmeta3_" + state.manifestVersion;
   const cache = state.weaponMetaCache ||= (store.get(key) || {});
   if (!(hash in cache)) {
     try {
       const d = await bungie(`/Destiny2/Manifest/DestinyInventoryItemDefinition/${hash}/`);
       const frameHash = (d.sockets?.socketEntries || [])[0]?.singleInitialItemHash;
+      let season = 0;
+      if (d.seasonHash) {
+        state.seasonNums ||= {};
+        if (!(d.seasonHash in state.seasonNums)) {
+          try { state.seasonNums[d.seasonHash] = (await bungie(`/Destiny2/Manifest/DestinySeasonDefinition/${d.seasonHash}/`)).seasonNumber || 0; }
+          catch { state.seasonNums[d.seasonHash] = 0; }
+        }
+        season = state.seasonNums[d.seasonHash];
+      }
       cache[hash] = {
+        season,
         shot: d.screenshot || "",
         slot: { 1498876634: "Kinetic", 2465295065: "Energy", 953998645: "Power" }[d.inventory?.bucketTypeHash] || "",
         element: { 1: "Kinetic", 2: "Arc", 3: "Solar", 4: "Void", 6: "Stasis", 7: "Strand" }[d.defaultDamageType] || "",
@@ -1481,7 +1503,7 @@ async function weaponMeta(hash) {
         frame: frameHash ? (state.plugNames[frameHash] || "") : "",
       };
     } catch (e) { cache[hash] = { shot: "" }; }
-    for (const k of Object.keys(localStorage)) if (/^d2v_wmeta2?_/.test(k) && k !== key) store.del(k);
+    for (const k of Object.keys(localStorage)) if (/^d2v_wmeta\d?_/.test(k) && k !== key) store.del(k);
     store.set(key, cache);
   }
   return cache[hash];
@@ -1509,6 +1531,20 @@ function edRender() {
   }
   txt.append(chips);
   head.append(txt);
+  // All versions, in their own box (like destiny.report).
+  const vb = $("edVersions");
+  const owned = new Set((state.results || []).map(w => w.hash));
+  vb.hidden = !(ed.versions && ed.versions.length > 1);
+  vb.innerHTML = "<h4>All versions</h4>";
+  for (const h of ed.versions || []) {
+    const vd = state.defs?.[h] || {}, vm = state.weaponMetaCache?.[h] || {};
+    const row = document.createElement("div");
+    row.className = "vrow" + (h === ed.hash ? " on" : "");
+    row.innerHTML = `${vd.icon ? `<img src="${BUNGIE + vd.icon}" alt="">` : ""}<span class="vn"></span>${owned.has(h) ? '<span class="own" title="You own this version">●</span>' : ""}${vm.season ? `<span class="ss">S${vm.season}</span>` : ""}`;
+    row.querySelector(".vn").textContent = vd.name || "?";
+    row.onclick = () => { if (h !== ed.hash) { ed.hash = h; busy(edLoadPool); } };
+    vb.append(row);
+  }
   const hero = $("edHero");
   hero.hidden = !d.shot;
   hero.innerHTML = d.shot ? `<img src="${BUNGIE + d.shot}" alt="">` : "";
@@ -1552,7 +1588,7 @@ function edRender() {
   }
   const pts = i => (i === 0 ? 25 : i === 1 ? 20 : 9 - (i - 2));
   $("edRank").innerHTML = ed.picks.length ? "" : '<span class="muted" style="border:none">No perks picked yet.</span>';
-  ed.picks.forEach((n, i) => $("edRank").append(Object.assign(document.createElement("span"), { textContent: `${i + 1}. ${n} (${pts(i)})` })));
+  ed.picks.forEach((n, i) => $("edRank").append(Object.assign(document.createElement("span"), { textContent: `${i + 1}. ${n}` })));
 }
 
 function edRenderList() {
