@@ -46,7 +46,9 @@
   td.excl { text-align:center; width:1%; white-space:nowrap; }
   td.excl input { width:16px; height:16px; cursor:pointer; accent-color:var(--bad); }
   tr.excluded td { opacity:.55; }
-  .perkgrid { display:inline-grid; grid-template-columns:auto repeat(5, 30px); gap:4px 6px; align-items:center; }
+  .perkgrid { display:inline-grid; grid-auto-flow:row; gap:4px 14px; align-items:center; }
+  .perkgrid .gl { font-size:10px; color:var(--dim); }
+  .perkgrid .ps { display:flex; gap:3px; }
   .perkgrid .rl { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; padding-right:4px; }
   .perk { width:30px; height:30px; border-radius:5px; border:2px solid transparent; background:#0d0f12; overflow:hidden; position:relative; }
   .perk img { width:100%; height:100%; display:block; }
@@ -437,52 +439,62 @@ const PERK_COLS = [
 ];
 
 /* For each column: the wanted perks, and what this copy has in the matching socket. */
+/* The weapon's perk sockets, in order (barrel, magazine, trait, trait, origin on most weapons): sockets past the frame
+   whose options look like perks (not trackers, shaders, masterworks, or mod sockets that list every mod). */
+function perkSockets(w) {
+  const pn = h => state.plugNames[h] || "";
+  const NOT_PERK = /tracker|shader|ornament|masterwork|memento|empty|default|catalyst|upgrade|deepsight|level boost|mod socket|weapon mod|^tier \d/i;
+  return w.sockets
+    .filter(s => s.idx > 0 && s.options.length <= 15 && s.options.some(h => pn(h) && !NOT_PERK.test(pn(h))))
+    .sort((a, b) => a.idx - b.idx)
+    .slice(0, 5);
+}
+
+/* Which socket each wanted perk lives in, learned from every copy you own (so the list's order doesn't matter —
+   e.g. Refurbished A499 lists trait 2 and the origin trait first). Perks no copy has rolled fall back to their usual column. */
+function perkPools(weapons) {
+  const pools = {};
+  for (const w of weapons) {
+    const k = norm(baseName(w.def.name));
+    const pool = pools[k] ||= {};
+    for (const s of w.sockets) for (const h of s.options) { const n = norm(state.plugNames[h] || ""); if (n) (pool[s.idx] ||= new Set()).add(n); }
+  }
+  state.perkPools = pools;
+  // Across all your weapons: which position (barrel, mag, trait, trait, origin) each perk usually sits in.
+  const counts = {};
+  for (const w of weapons) perkSockets(w).forEach((sock, pos) => {
+    for (const h of sock.options) { const n = norm(state.plugNames[h] || ""); if (n) ((counts[n] ||= [0, 0, 0, 0, 0])[pos]++); }
+  });
+  state.perkPos = Object.fromEntries(Object.entries(counts).map(([n, c]) => [n, c.indexOf(Math.max(...c))]));
+}
+
 function perkColumns(w) {
   const t = w.tier;
   if (!t) return null;
   const pn = h => state.plugNames[h] || "";
-  const NOT_PERK = /tracker|shader|ornament|masterwork|memento|empty|default|catalyst|upgrade|deepsight|level boost|mod socket|weapon mod|^tier \d|enhance/i;
-  const cands = w.sockets.filter(s => s.idx > 0 && s.options.some(h => pn(h) && !NOT_PERK.test(pn(h)))).sort((a, b) => a.idx - b.idx);
-  const cols = PERK_COLS.map(c => {
-    const top = t.prio[c.top] || "", alts = c.alts.map(k => t.prio[k]).filter(Boolean);
-    return { col: c, top, alts, want: new Set([top, ...alts].filter(Boolean).map(norm)), sock: null };
-  });
-  const used = new Set();
-  // 1. A socket offering a wanted perk.
-  for (const c of cols) {
-    c.sock = cands.find(s => !used.has(s.idx) && s.options.some(h => c.want.has(norm(pn(h))))) || null;
-    if (c.sock) used.add(c.sock.idx);
+  const socks = perkSockets(w);
+  const pool = state.perkPools?.[norm(baseName(w.def.name))] || {};
+  const ROLE_OF = {}; // priority index -> usual column position
+  PERK_COLS.forEach((c, pos) => { ROLE_OF[c.top] = pos; for (const a of c.alts) ROLE_OF[a] = pos; });
+  const cols = socks.map((sock, pos) => ({ col: PERK_COLS[pos] || { label: "Perk " + (pos + 1) }, sock, wanted: [] }));
+  // Wanted perks in priority order (Priority 1 first), each placed in the socket where it's found on your copies.
+  for (let k = 0; k < 11; k++) {
+    const name = t.prio[k];
+    if (!name) continue;
+    let c = cols.find(x => pool[x.sock.idx]?.has(norm(name)));
+    if (!c && state.perkPos?.[norm(name)] != null) c = cols[state.perkPos[norm(name)]];
+    if (!c) c = cols[ROLE_OF[k]];
+    if (c) c.wanted.push(name);
   }
-  // 2. A socket whose perks appear in this column elsewhere on your list.
-  for (const c of cols) {
-    if (c.sock) continue;
-    let best = 0;
-    for (const s of cands) {
-      if (used.has(s.idx)) continue;
-      const hits = s.options.filter(h => state.colNames[c.col.key].has(norm(pn(h)))).length;
-      if (hits > best) { best = hits; c.sock = s; }
-    }
-    if (c.sock) used.add(c.sock.idx);
-  }
-  // 3. By position: barrel, magazine, trait 1, trait 2, origin come in that order on the weapon.
-  cols.forEach((c, k) => {
-    if (c.sock) return;
-    const lo = Math.max(-1, ...cols.slice(0, k).filter(x => x.sock).map(x => x.sock.idx));
-    const hiList = cols.slice(k + 1).filter(x => x.sock).map(x => x.sock.idx);
-    const hi = hiList.length ? Math.min(...hiList) : Infinity;
-    c.sock = cands.find(s => !used.has(s.idx) && s.idx > lo && s.idx < hi) || null;
-    if (c.sock) used.add(c.sock.idx);
-  });
   return cols.map(c => {
-    let status = "none", shown = 0;
-    if (c.sock) {
-      const topH = c.sock.options.find(h => c.top && norm(pn(h)) === norm(c.top));
-      const altH = c.sock.options.find(h => c.alts.some(a => norm(a) === norm(pn(h))));
-      if (topH) { status = "ok"; shown = topH; }
-      else if (altH) { status = "alt"; shown = altH; }
-      else { status = c.top || c.alts.length ? "bad" : "none"; shown = c.sock.plugged || c.sock.options[0]; }
-    }
-    return { ...c, status, shown };
+    const top = c.wanted[0] || "", alts = c.wanted.slice(1);
+    const topH = c.sock.options.find(h => top && norm(pn(h)) === norm(top));
+    const altH = c.sock.options.find(h => alts.some(a => norm(a) === norm(pn(h))));
+    let status, shown;
+    if (topH) { status = "ok"; shown = topH; }
+    else if (altH) { status = "alt"; shown = altH; }
+    else { status = top ? "bad" : "none"; shown = c.sock.plugged || c.sock.options[0]; }
+    return { col: c.col, top, alts, sock: c.sock, status, shown };
   });
 }
 
@@ -604,24 +616,31 @@ function render() {
     if (cols) {
       const grid = document.createElement("div");
       grid.className = "perkgrid";
-      const icon = name => state.nameIcon[norm(name)] || "";
+      grid.style.gridTemplateColumns = `auto repeat(${cols.length}, auto)`;
       const pn = h => state.plugNames[h] || "";
       // Icons of perks seen on your weapons beat the name lookup.
       const seen = {};
-      for (const s of w.sockets) for (const h of s.options) if (!seen[norm(pn(h))] && state.plugIcons[h]) seen[norm(pn(h))] = state.plugIcons[h];
-      const iconFor = name => seen[norm(name)] || icon(name);
+      for (const sk of w.sockets) for (const h of sk.options) if (!seen[norm(pn(h))] && state.plugIcons[h]) seen[norm(pn(h))] = state.plugIcons[h];
+      const iconFor = name => seen[norm(name)] || state.nameIcon[norm(name)] || "";
+      const group = tiles => { const g = document.createElement("div"); g.className = "ps"; g.append(...tiles); return g; };
+      grid.append(document.createElement("span"));
+      for (const c of cols) grid.append(Object.assign(document.createElement("span"), { className: "gl", textContent: c.col.label }));
+      // Wanted: your perks for each column, best first.
       grid.append(Object.assign(document.createElement("span"), { className: "rl", textContent: "Wanted" }));
       for (const c of cols) {
-        const title = c.top ? `${c.col.label}: ${c.top}${c.alts.length ? "\nAlternates: " + c.alts.join(", ") : ""}` : `${c.col.label}: nothing listed`;
-        grid.append(perkTile(c.top ? "want" : "none", c.top ? iconFor(c.top) : "", title, c.top ? c.top[0] : "–"));
+        const wanted = [c.top, ...c.alts].filter(Boolean);
+        grid.append(group(wanted.length ? wanted.map(n => perkTile("want", iconFor(n), n, n[0])) : [perkTile("none", "", "Nothing listed", "–")]));
       }
+      // Has: what this copy has in each column (every option, if the socket has more than one).
       grid.append(Object.assign(document.createElement("span"), { className: "rl", textContent: "Has" }));
       for (const c of cols) {
-        const name = c.shown ? pn(c.shown) : "";
-        const all = c.sock ? c.sock.options.map(pn).filter(Boolean) : [];
-        const note = c.status === "ok" ? "wanted" : c.status === "alt" ? "alternate" : c.status === "bad" ? `wanted ${[c.top, ...c.alts].filter(Boolean).join(" or ")}` : "";
-        const title = c.sock ? `${c.col.label}: ${name}${note ? " (" + note + ")" : ""}${all.length > 1 ? "\nOptions: " + all.join(", ") : ""}` : `${c.col.label}: couldn't find this socket`;
-        grid.append(perkTile(c.status, c.shown ? state.plugIcons[c.shown] : "", title, c.sock ? "?" : "–"));
+        const opts = c.sock.options.length ? c.sock.options : [c.sock.plugged];
+        const wantedAny = !!(c.top || c.alts.length);
+        grid.append(group(opts.map(h => {
+          const n = norm(pn(h));
+          const cls = !wantedAny ? "none" : n === norm(c.top) ? "ok" : c.alts.some(a => norm(a) === n) ? "alt" : "bad";
+          return perkTile(cls, state.plugIcons[h], pn(h), pn(h)[0] || "?");
+        })));
       }
       tdP.append(grid);
     } else {
@@ -1248,6 +1267,7 @@ async function scan() {
   log("Reading your weapons…");
   const weapons = await loadWeapons();
   state.results = score(weapons, tiers);
+  perkPools(weapons);
   log(`Scored ${weapons.length} legendary weapons; ${weapons.filter(w => w.junk).length} junk.`);
   render();
   try { await scanArmor(); } catch (e) { log("Armor error: " + e.message); }
