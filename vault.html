@@ -147,7 +147,7 @@
         <button id="tabJunk" class="small on">Junk</button>
         <button id="tabKeep" class="small">Keeping</button>
         <button id="tabAll" class="small">All</button>
-        <input type="text" id="filter" class="filter" placeholder="Filter by name (shift-click a weapon for its copies)">
+        <input type="text" id="filter" class="filter" placeholder="Filter by name (click a weapon for its copies)">
         <span id="onlyChip" class="only" hidden><span id="onlyName"></span><button id="onlyClear" title="Show all">×</button></span>
       </div>
       <table>
@@ -217,7 +217,7 @@ const CONFIG = {
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 20:05";
+const BUILD = "2026-11-10 20:10";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -634,9 +634,8 @@ function render() {
     const nm = document.createElement("span");
     nm.className = "wname";
     nm.textContent = w.def.name;
-    nm.title = "Shift-click to show only this weapon's copies";
-    nm.onclick = e => {
-      if (!e.shiftKey) return;
+    nm.title = "Click to show only this weapon's copies; click again to show everything";
+    nm.onclick = () => {
       const k = norm(baseName(w.def.name));
       state.only = state.only === k ? null : k;
       render();
