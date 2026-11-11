@@ -217,7 +217,7 @@ const CONFIG = {
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 20:50";
+const BUILD = "2026-11-10 21:00";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -309,7 +309,7 @@ async function loadDefs() {
   state.manifestPaths = man.jsonWorldComponentContentPaths.en;
   log("Downloading item definitions…");
   const raw = await (await fetch(BUNGIE + man.jsonWorldComponentContentPaths.en.DestinyInventoryItemLiteDefinition)).json();
-  const defs = {}, plugs = {}, armorDefs = {}, plugInfo = {}, icons = {}, nameIcon = {}, types = {};
+  const defs = {}, plugs = {}, armorDefs = {}, plugInfo = {}, icons = {}, nameIcon = {}, types = {}, iconFallback = {};
   for (const [h, d] of Object.entries(raw)) {
     // Every item's name: perks are items too, and the light item list doesn't always include their plug details.
     // Enhanced perks are named like "Golden Tricorn Enhanced"; treat them as the same perk as the base one.
@@ -317,7 +317,10 @@ async function loadDefs() {
     if (d.itemTypeDisplayName) types[h] = d.itemTypeDisplayName;
     if (d.displayProperties?.icon) { icons[h] = d.displayProperties.icon;
       const n = norm(d.displayProperties.name || "");
-      if (n && !nameIcon[n] && /trait|barrel|magazine|perk|origin|scope|sight|blade|guard|bowstring|arrow|haft|battery|grip|stock|launcher|tube|rail/i.test(d.itemTypeDisplayName || "")) nameIcon[n] = d.displayProperties.icon; }
+      const t = d.itemTypeDisplayName || "";
+      if (n && !nameIcon[n] && (PERK_TYPE.test(t) || /perk|origin/i.test(t)) && !NOT_PERK_TYPE.test(t)) nameIcon[n] = d.displayProperties.icon;
+      // Perks with type names we don't recognize (new weapon types, e.g. crossbow bolts): used only if nothing better turns up.
+      else if (n && d.itemType !== ITEMTYPE_WEAPON && d.itemType !== 2 && !NOT_PERK_TYPE.test(t)) iconFallback[n] ||= d.displayProperties.icon; }
     if (d.itemType === ITEMTYPE_WEAPON && d.inventory) {
       defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "", recipe: !!d.inventory.recipeItemHash };
     }
@@ -330,6 +333,7 @@ async function loadDefs() {
   state.plugNames = plugs;
   state.plugIcons = icons;
   state.plugTypes = types;
+  for (const [n, ic] of Object.entries(iconFallback)) nameIcon[n] ||= ic;
   state.nameIcon = nameIcon;
   state.armorDefs = armorDefs;
   state.plugInfo = plugInfo;
