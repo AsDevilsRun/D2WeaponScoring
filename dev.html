@@ -335,7 +335,7 @@ const CONFIG = {
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 20:10";
+const BUILD = "2026-11-10 21:00";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -427,7 +427,7 @@ async function loadDefs() {
   state.manifestPaths = man.jsonWorldComponentContentPaths.en;
   log("Downloading item definitions…");
   const raw = await (await fetch(BUNGIE + man.jsonWorldComponentContentPaths.en.DestinyInventoryItemLiteDefinition)).json();
-  const defs = {}, plugs = {}, armorDefs = {}, plugInfo = {}, icons = {}, nameIcon = {}, types = {};
+  const defs = {}, plugs = {}, armorDefs = {}, plugInfo = {}, icons = {}, nameIcon = {}, types = {}, iconFallback = {};
   for (const [h, d] of Object.entries(raw)) {
     // Every item's name: perks are items too, and the light item list doesn't always include their plug details.
     // Enhanced perks are named like "Golden Tricorn Enhanced"; treat them as the same perk as the base one.
@@ -435,7 +435,10 @@ async function loadDefs() {
     if (d.itemTypeDisplayName) types[h] = d.itemTypeDisplayName;
     if (d.displayProperties?.icon) { icons[h] = d.displayProperties.icon;
       const n = norm(d.displayProperties.name || "");
-      if (n && !nameIcon[n] && /trait|barrel|magazine|perk|origin|scope|sight|blade|guard|bowstring|arrow|haft|battery|grip|stock|launcher|tube|rail/i.test(d.itemTypeDisplayName || "")) nameIcon[n] = d.displayProperties.icon; }
+      const t = d.itemTypeDisplayName || "";
+      if (n && !nameIcon[n] && (PERK_TYPE.test(t) || /perk|origin/i.test(t)) && !NOT_PERK_TYPE.test(t)) nameIcon[n] = d.displayProperties.icon;
+      // Perks with type names we don't recognize (new weapon types, e.g. crossbow bolts): used only if nothing better turns up.
+      else if (n && d.itemType !== ITEMTYPE_WEAPON && d.itemType !== 2 && !NOT_PERK_TYPE.test(t)) iconFallback[n] ||= d.displayProperties.icon; }
     if (d.itemType === ITEMTYPE_WEAPON && d.inventory) {
       defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "", recipe: !!d.inventory.recipeItemHash, flavor: d.flavorText || "", shot: d.screenshot || "" };
     }
@@ -448,6 +451,7 @@ async function loadDefs() {
   state.plugNames = plugs;
   state.plugIcons = icons;
   state.plugTypes = types;
+  for (const [n, ic] of Object.entries(iconFallback)) nameIcon[n] ||= ic;
   state.nameIcon = nameIcon;
   state.armorDefs = armorDefs;
   state.plugInfo = plugInfo;
@@ -588,7 +592,10 @@ const isPerkPlug = h => PERK_TYPE.test(plugType(h)) && !NOT_PERK_TYPE.test(plugT
 
 /* The five columns on this copy: barrel-like, magazine-like, trait 1, trait 2, origin (any may be missing). */
 function perkSockets(w) {
-  const socks = w.sockets.filter(s => s.idx > 0 && s.options.some(isPerkPlug)).sort((a, b) => a.idx - b.idx);
+  // Prefer the weapon's own "Weapon Perks" socket group (works for new weapon types whose perk type names we don't know);
+  // fall back to recognizing perk sockets by their plugs' type names.
+  const pi = state.perkIdx?.[w.hash];
+  const socks = (pi ? w.sockets.filter(s => pi.includes(s.idx)) : w.sockets.filter(s => s.idx > 0 && s.options.some(isPerkPlug))).sort((a, b) => a.idx - b.idx);
   const kind = s => s.options.some(h => /origin/i.test(plugType(h))) ? "origin" : s.options.some(h => /trait/i.test(plugType(h))) ? "trait" : "part";
   const parts = socks.filter(s => kind(s) === "part"), traits = socks.filter(s => kind(s) === "trait"), origin = socks.find(s => kind(s) === "origin");
   return [parts[0] || null, parts[1] || null, traits[0] || null, traits[1] || null, origin || null];
@@ -598,7 +605,9 @@ function perkSockets(w) {
 async function loadWeaponPools(weapons) {
   const key = "d2v_wpools_" + state.manifestVersion;
   const cache = state.weaponPools ||= (store.get(key) || {});
-  const hashes = [...new Set(weapons.filter(w => w.tier).map(w => w.hash))].filter(h => !(h in cache));
+  const pkey = "d2v_wperk_" + state.manifestVersion;
+  const perkIdx = state.perkIdx ||= (store.get(pkey) || {});
+  const hashes = [...new Set(weapons.filter(w => w.tier).map(w => w.hash))].filter(h => !(h in cache) || !(h in perkIdx));
   if (!hashes.length) return;
   log(`Reading perk pools for ${hashes.length} weapons (once per game update)…`);
   if (!state.plugSets) {
@@ -620,11 +629,14 @@ async function loadWeaponPools(weapons) {
           if (names.size) pools[idx] = [...names];
         });
         cache[h] = pools;
-      } catch (e) { cache[h] = null; }
+        // Socket indexes Bungie groups as "Weapon Perks" (barrel, magazine, traits, origin…), in order.
+        perkIdx[h] = (d.sockets?.socketCategories || []).find(c => c.socketCategoryHash === 4241085061)?.socketIndexes || null;
+      } catch (e) { cache[h] = null; perkIdx[h] = null; }
     }
   }));
-  for (const k of Object.keys(localStorage)) if (k.startsWith("d2v_wpools_") && k !== key) store.del(k);
+  for (const k of Object.keys(localStorage)) if ((k.startsWith("d2v_wpools_") && k !== key) || (k.startsWith("d2v_wperk_") && k !== pkey)) store.del(k);
   store.set(key, cache);
+  store.set(pkey, perkIdx);
 }
 
 /* Fallback pools: perks seen on your own copies, by socket. */
@@ -1451,8 +1463,9 @@ function edNamesIndex() {
 function poolColumns(hash) {
   const pools = state.weaponPools?.[hash] || {};
   const map = nameToPlug();
-  const socks = Object.keys(pools).map(Number).sort((a, b) => a - b)
-    .map(idx => ({ idx, names: pools[idx].filter(n => map[n] && isPerkPlug(map[n])) }))
+  const pi = state.perkIdx?.[hash];
+  const socks = (pi || Object.keys(pools).map(Number)).filter(idx => pools[idx]).sort((a, b) => a - b)
+    .map(idx => ({ idx, names: pi ? pools[idx] : pools[idx].filter(n => map[n] && isPerkPlug(map[n])) }))
     .filter(s => s.names.length);
   const kind = s => s.names.some(n => /origin/i.test(plugType(map[n]))) ? "origin" : s.names.some(n => /trait/i.test(plugType(map[n]))) ? "trait" : "part";
   const parts = socks.filter(s => kind(s) === "part"), traits = socks.filter(s => kind(s) === "trait"), origins = socks.filter(s => kind(s) === "origin");
@@ -1771,6 +1784,12 @@ function nameToPlug() {
   const out = {};
   for (const [h, t] of Object.entries(state.plugTypes || {})) {
     if (!PERK_TYPE.test(t) || NOT_PERK_TYPE.test(t)) continue;
+    const n = norm(state.plugNames[h] || "");
+    if (n && !out[n]) out[n] = Number(h);
+  }
+  // Second pass: plugs with type names we don't recognize (new weapon types), if not mods, shaders and the like.
+  for (const [h, t] of Object.entries(state.plugTypes || {})) {
+    if (NOT_PERK_TYPE.test(t)) continue;
     const n = norm(state.plugNames[h] || "");
     if (n && !out[n]) out[n] = Number(h);
   }
