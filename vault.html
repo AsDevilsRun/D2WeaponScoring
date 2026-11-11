@@ -217,7 +217,7 @@ const CONFIG = {
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 20:10";
+const BUILD = "2026-11-10 20:50";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -456,7 +456,10 @@ const isPerkPlug = h => PERK_TYPE.test(plugType(h)) && !NOT_PERK_TYPE.test(plugT
 
 /* The five columns on this copy: barrel-like, magazine-like, trait 1, trait 2, origin (any may be missing). */
 function perkSockets(w) {
-  const socks = w.sockets.filter(s => s.idx > 0 && s.options.some(isPerkPlug)).sort((a, b) => a.idx - b.idx);
+  // Prefer the weapon's own "Weapon Perks" socket group (works for new weapon types whose perk type names we don't know);
+  // fall back to recognizing perk sockets by their plugs' type names.
+  const pi = state.perkIdx?.[w.hash];
+  const socks = (pi ? w.sockets.filter(s => pi.includes(s.idx)) : w.sockets.filter(s => s.idx > 0 && s.options.some(isPerkPlug))).sort((a, b) => a.idx - b.idx);
   const kind = s => s.options.some(h => /origin/i.test(plugType(h))) ? "origin" : s.options.some(h => /trait/i.test(plugType(h))) ? "trait" : "part";
   const parts = socks.filter(s => kind(s) === "part"), traits = socks.filter(s => kind(s) === "trait"), origin = socks.find(s => kind(s) === "origin");
   return [parts[0] || null, parts[1] || null, traits[0] || null, traits[1] || null, origin || null];
@@ -466,7 +469,9 @@ function perkSockets(w) {
 async function loadWeaponPools(weapons) {
   const key = "d2v_wpools_" + state.manifestVersion;
   const cache = state.weaponPools ||= (store.get(key) || {});
-  const hashes = [...new Set(weapons.filter(w => w.tier).map(w => w.hash))].filter(h => !(h in cache));
+  const pkey = "d2v_wperk_" + state.manifestVersion;
+  const perkIdx = state.perkIdx ||= (store.get(pkey) || {});
+  const hashes = [...new Set(weapons.filter(w => w.tier).map(w => w.hash))].filter(h => !(h in cache) || !(h in perkIdx));
   if (!hashes.length) return;
   log(`Reading perk pools for ${hashes.length} weapons (once per game update)…`);
   if (!state.plugSets) {
@@ -488,11 +493,14 @@ async function loadWeaponPools(weapons) {
           if (names.size) pools[idx] = [...names];
         });
         cache[h] = pools;
-      } catch (e) { cache[h] = null; }
+        // Socket indexes Bungie groups as "Weapon Perks" (barrel, magazine, traits, origin…), in order.
+        perkIdx[h] = (d.sockets?.socketCategories || []).find(c => c.socketCategoryHash === 4241085061)?.socketIndexes || null;
+      } catch (e) { cache[h] = null; perkIdx[h] = null; }
     }
   }));
-  for (const k of Object.keys(localStorage)) if (k.startsWith("d2v_wpools_") && k !== key) store.del(k);
+  for (const k of Object.keys(localStorage)) if ((k.startsWith("d2v_wpools_") && k !== key) || (k.startsWith("d2v_wperk_") && k !== pkey)) store.del(k);
   store.set(key, cache);
+  store.set(pkey, perkIdx);
 }
 
 /* Fallback pools: perks seen on your own copies, by socket. */
