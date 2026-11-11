@@ -217,7 +217,7 @@ const CONFIG = {
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 15:58";
+const BUILD = "2026-11-10 20:05";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -396,7 +396,7 @@ function parseCSV(text) {
   return rows;
 }
 
-/* A weapon can have several rows (different roll targets); a copy scores against each and keeps its best, as your Scores tab does.
+/* A weapon can have several rows (different roll targets, e.g. PvE and PvP); each row keeps its own best copy.
    Points, as in your sheet: Priority 1 = 25, Priority 2 = 20, then the filled Priorities 3–11 in order get 9, 8, 7, …
    Max = 90 − (9 − n)(10 − n)/2, where n is how many of Priorities 3–11 are filled. */
 async function loadTiered() {
@@ -543,48 +543,54 @@ function perkTile(cls, icon, title, fallback = "") {
 const baseName = n => String(n).replace(/\s*\((adept|timelost|harrowed|baroque)\)\s*$/i, "").trim();
 function score(weapons, tiers) {
   const opt = { unlisted: $("optUnlisted").checked, crafted: $("optCrafted").checked, locked: $("optLocked").checked };
+  const key = w => norm(baseName(w.def.name));
+  // Score every copy against each of the weapon's rows separately.
   for (const w of weapons) {
-    const rows = tiers[norm(baseName(w.def.name))];
+    const rows = tiers[key(w)];
     w.rows = rows || null;
-    w.tier = null;
-    w.matched = [];
-    w.score = null;
-    if (!rows) continue;
-    const have = new Set([...w.perks].map(norm));
-    for (const t of rows) {
+    w.tier = null; w.matched = []; w.score = null; w.best = null;
+    w.rowScores = rows ? rows.map(t => {
+      const have = new Set([...w.perks].map(norm));
       const matched = [];
       for (const [k, { perk, v }] of t.pts) if (have.has(k)) matched.push({ perk, v });
-      const sc = matched.reduce((sum, m) => sum + m.v, 0);
-      if (w.score == null || sc > w.score) { w.score = sc; w.tier = t; w.matched = matched.sort((a, b) => b.v - a.v); }
-    }
+      return { matched: matched.sort((a, b) => b.v - a.v), sc: matched.reduce((sum, m) => sum + m.v, 0) };
+    }) : null;
   }
+  // Best score on each row, per weapon.
   const best = {};
-  const key = w => norm(baseName(w.def.name));
-  for (const w of weapons) if (w.score != null) best[key(w)] = Math.max(best[key(w)] ?? -1, w.score);
-  for (const w of weapons) {
-    w.best = best[key(w)] ?? null;
-    let junk = w.score == null ? opt.unlisted : w.score < w.best;
-    w.why = w.score == null ? "not on the weapon list" : (w.score < w.best ? "a better copy exists" : "best copy");
-    if (junk && opt.crafted && w.crafted) { junk = false; w.why += " · kept: crafted"; }
-    if (junk && opt.locked && w.locked) { junk = false; w.why += " · kept: locked"; }
-    w.junk = junk;
+  for (const w of weapons) if (w.rowScores) {
+    const b = best[key(w)] ||= [];
+    w.rowScores.forEach((r, i) => { b[i] = Math.max(b[i] ?? -1, r.sc); });
   }
-  // Duplicates: best copies with exactly the same scored perks keep only one — the oldest (lowest item ID).
-  const groups = {};
+  // Each row keeps its best copy. Copies tied on a row with exactly the same scored perks keep only the oldest (lowest item ID);
+  // tied copies with different perks are all kept.
+  const winners = {};
+  for (const w of weapons) if (w.rowScores) w.rowScores.forEach((r, i) => {
+    if (r.sc !== best[key(w)][i]) return;
+    const sig = key(w) + "|" + i + "|" + r.matched.map(m => norm(m.perk)).sort().join(",");
+    const cur = winners[sig];
+    if (!cur || BigInt(w.id) < BigInt(cur.w.id)) winners[sig] = { w, i };
+  });
+  const keptRow = new Map();
+  for (const { w, i } of Object.values(winners)) if (!keptRow.has(w) || i < keptRow.get(w)) keptRow.set(w, i);
   for (const w of weapons) {
-    if (w.junk || w.score == null || w.score !== w.best) continue;
-    const sig = key(w) + "|" + w.matched.map(m => norm(m.perk)).sort().join(",");
-    (groups[sig] ||= []).push(w);
-  }
-  for (const g of Object.values(groups)) {
-    if (g.length < 2) continue;
-    g.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
-    const keep = g[0];
-    keep.why += ` · kept over ${g.length - 1} duplicate${g.length > 2 ? "s" : ""}`;
-    for (const w of g.slice(1)) {
-      w.junk = !(opt.crafted && w.crafted) && !(opt.locked && w.locked);
-      w.why = "duplicate of an older copy with the same perks" + (w.junk ? "" : ` · kept: ${opt.crafted && w.crafted ? "crafted" : "locked"}`);
+    if (!w.rowScores) {
+      w.junk = opt.unlisted; w.why = "not on the weapon list";
+    } else {
+      const b = best[key(w)];
+      // Show the row this copy is kept for; a junk copy shows the row it came closest on.
+      let i = keptRow.get(w);
+      if (i == null) {
+        i = 0;
+        w.rowScores.forEach((r, j) => { const gap = b[j] - r.sc, g0 = b[i] - w.rowScores[i].sc; if (gap < g0 || (gap === g0 && r.sc > w.rowScores[i].sc)) i = j; });
+      }
+      const r = w.rowScores[i];
+      w.tier = w.rows[i]; w.matched = r.matched; w.score = r.sc; w.best = b[i];
+      w.junk = !keptRow.has(w);
+      w.why = !w.junk ? "best copy" : w.rowScores.some((x, j) => x.sc === b[j]) ? "duplicate of an older copy with the same perks" : "a better copy exists";
     }
+    if (w.junk && opt.crafted && w.crafted) { w.junk = false; w.why += " · kept: crafted"; }
+    if (w.junk && opt.locked && w.locked) { w.junk = false; w.why += " · kept: locked"; }
   }
   return weapons;
 }
@@ -671,10 +677,11 @@ function render() {
         const wanted = [c.top, ...c.alts].filter(Boolean).map(norm);
         const have = new Set(opts.map(h => norm(pn(h))));
         // Red only while a wanted perk is still missing from this column; once all are here, extras are left alone.
+        // A wanted perk is green unless a perk ranked above it for this column is missing; then it's yellow.
         const allCovered = wanted.length && wanted.every(n => have.has(n));
         grid.append(group(opts.map(h => {
-          const n = norm(pn(h));
-          const cls = !wanted.length ? "none" : n === norm(c.top) ? "ok" : c.alts.some(a => norm(a) === n) ? "alt" : allCovered ? "none" : "bad";
+          const n = norm(pn(h)), rank = wanted.indexOf(n);
+          const cls = !wanted.length ? "none" : rank >= 0 ? (wanted.slice(0, rank).every(x => have.has(x)) ? "ok" : "alt") : allCovered ? "none" : "bad";
           return perkTile(cls, state.plugIcons[h], pn(h), pn(h)[0] || "?");
         })));
       }
