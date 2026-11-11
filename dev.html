@@ -66,12 +66,15 @@
   .vrow img { width:34px; height:34px; border-radius:3px; }
   .vrow .vn { flex:1; font-size:13px; }
   .vrow .own { color:var(--accent); font-size:11px; }
+  .vrow .vsub { font-size:11px; color:var(--dim); margin-top:1px; }
+  .vrow img.wm { width:22px; height:22px; border-radius:0; background:#222; }
   .vrow .ss { font-size:11px; color:#e0b54a; border:1px solid rgba(224,181,74,.4); background:rgba(224,181,74,.12); border-radius:4px; padding:1px 6px; }
-  .edhero { flex:1; min-width:260px; align-self:stretch; min-height:300px; position:relative; overflow:hidden; border-radius:8px; }
+  .edhero { flex:1; min-width:300px; aspect-ratio:16 / 9; position:relative; overflow:hidden; border-radius:8px; align-self:flex-start; margin-top:20px; }
   /* Bungie's screenshot has a scene behind the weapon, so it is faded into the page with a radial mask instead of a true cut-out. */
-  .edhero img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center;
-    -webkit-mask-image:radial-gradient(ellipse 60% 55% at 50% 50%, #000 35%, transparent 75%);
-            mask-image:radial-gradient(ellipse 60% 55% at 50% 50%, #000 35%, transparent 75%); opacity:.95; }
+  /* The whole 16:9 screenshot, edges faded into the page. */
+  .edhero img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+    -webkit-mask-image:radial-gradient(ellipse 72% 70% at 50% 50%, #000 55%, transparent 100%);
+            mask-image:radial-gradient(ellipse 72% 70% at 50% 50%, #000 55%, transparent 100%); }
   @media (max-width:1000px){ .edhero { display:none; } }
   .edcol { display:flex; flex-direction:column; gap:10px; align-items:center; }
   .edcol h4 { margin:0; font-size:10px; color:var(--dim); font-weight:600; text-transform:uppercase; letter-spacing:.05em; height:14px; white-space:nowrap; }
@@ -236,6 +239,7 @@
         <input type="text" id="edSearch" list="edNames" placeholder="Find a weapon" style="max-width:320px">
         <datalist id="edNames"></datalist>
         <select id="edVersion" hidden title="This weapon has more than one version"></select>
+        <select id="edRoll" hidden title="Which roll you're editing (each roll keeps its own best copy)"></select>
         <span class="muted" id="edInfo"></span>
       </div>
       <div class="muted" style="font-size:12px;margin-bottom:8px">Click perks from most to least important (up to 11). Click again to remove. Shift-click a picked perk to move it up one place, Alt-click to move it down. Your first two picks matter most.</div>
@@ -247,9 +251,11 @@
       </div>
       <div id="edRank" class="edrank"></div>
       <div class="controls" style="margin-top:10px">
-        <button id="edSave" class="primary">Save to my list</button>
+        <button id="edSave" class="primary">Overwrite roll 1</button>
+        <button id="edSaveNew">Save as new roll</button>
         <button id="edClear">Clear picks</button>
-        <button id="edRemove">Remove from my list</button>
+        <button id="edDelRoll" hidden>Delete this roll</button>
+        <button id="edRemove">Remove weapon from my list</button>
       </div>
     </div>
     <div class="card">
@@ -329,7 +335,7 @@ const CONFIG = {
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 16:18";
+const BUILD = "2026-11-10 20:05";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_WEAPON = 3;
@@ -508,7 +514,7 @@ function parseCSV(text) {
   return rows;
 }
 
-/* A weapon can have several rows (different roll targets); a copy scores against each and keeps its best, as your Scores tab does.
+/* A weapon can have several rows (different roll targets, e.g. PvE and PvP); each row keeps its own best copy.
    Points, as in your sheet: Priority 1 = 25, Priority 2 = 20, then the filled Priorities 3–11 in order get 9, 8, 7, …
    Max = 90 − (9 − n)(10 − n)/2, where n is how many of Priorities 3–11 are filled. */
 /* One row of the list: Priority 1 = 25 points, Priority 2 = 20, then the filled Priorities 3–11 in order get 9, 8, 7, … */
@@ -527,6 +533,9 @@ function tierRow(name, prio) {
   return { name, pts, prio: Array.from({ length: 11 }, (_, k) => p(k)), max: 90 - (9 - n) * (10 - n) / 2 };
 }
 const myList = () => store.get("d2v_mylist") || {};
+/* A list entry holds one or more rolls (e.g. PvE and PvP); older entries saved a single "prio". */
+const rollsOf = e => (e?.rolls || (e?.prio ? [e.prio] : [])).filter(p => p.some(Boolean));
+const pad11 = picks => Array.from({ length: 11 }, (_, k) => picks[k] || "");
 
 async function loadTiered() {
   const url = $("tieredUrl").value.trim() || TIERED_CSV;
@@ -550,7 +559,7 @@ async function loadTiered() {
   state.sheetTiers = tiers;
   // Your own list (made in the editor, saved in this browser) replaces the sheet's rows for the weapons it has.
   const mine = myList();
-  if ($("useMine")?.checked !== false) for (const e of Object.values(mine)) tiers[norm(e.name)] = [tierRow(e.name, e.prio)];
+  if ($("useMine")?.checked !== false) for (const e of Object.values(mine)) { const r = rollsOf(e); if (r.length) tiers[norm(e.name)] = r.map(p => tierRow(e.name, p)); }
   if (Object.keys(mine).length) log(`My list: ${Object.keys(mine).length} weapons${$("useMine")?.checked === false ? " (not used)" : ""}.`);
   // Every perk named in each column across the whole list, to tell which socket on a weapon is its barrel, magazine, etc.
   state.colNames = Object.fromEntries(PERK_COLS.map(c => [c.key, new Set()]));
@@ -666,48 +675,54 @@ function perkTile(cls, icon, title, fallback = "") {
 const baseName = n => String(n).replace(/\s*\((adept|timelost|harrowed|baroque)\)\s*$/i, "").trim();
 function score(weapons, tiers) {
   const opt = { unlisted: $("optUnlisted").checked, crafted: $("optCrafted").checked, locked: $("optLocked").checked };
+  const key = w => norm(baseName(w.def.name));
+  // Score every copy against each of the weapon's rows separately.
   for (const w of weapons) {
-    const rows = tiers[norm(baseName(w.def.name))];
+    const rows = tiers[key(w)];
     w.rows = rows || null;
-    w.tier = null;
-    w.matched = [];
-    w.score = null;
-    if (!rows) continue;
-    const have = new Set([...w.perks].map(norm));
-    for (const t of rows) {
+    w.tier = null; w.matched = []; w.score = null; w.best = null;
+    w.rowScores = rows ? rows.map(t => {
+      const have = new Set([...w.perks].map(norm));
       const matched = [];
       for (const [k, { perk, v }] of t.pts) if (have.has(k)) matched.push({ perk, v });
-      const sc = matched.reduce((sum, m) => sum + m.v, 0);
-      if (w.score == null || sc > w.score) { w.score = sc; w.tier = t; w.matched = matched.sort((a, b) => b.v - a.v); }
-    }
+      return { matched: matched.sort((a, b) => b.v - a.v), sc: matched.reduce((sum, m) => sum + m.v, 0) };
+    }) : null;
   }
+  // Best score on each row, per weapon.
   const best = {};
-  const key = w => norm(baseName(w.def.name));
-  for (const w of weapons) if (w.score != null) best[key(w)] = Math.max(best[key(w)] ?? -1, w.score);
-  for (const w of weapons) {
-    w.best = best[key(w)] ?? null;
-    let junk = w.score == null ? opt.unlisted : w.score < w.best;
-    w.why = w.score == null ? "not on the weapon list" : (w.score < w.best ? "a better copy exists" : "best copy");
-    if (junk && opt.crafted && w.crafted) { junk = false; w.why += " · kept: crafted"; }
-    if (junk && opt.locked && w.locked) { junk = false; w.why += " · kept: locked"; }
-    w.junk = junk;
+  for (const w of weapons) if (w.rowScores) {
+    const b = best[key(w)] ||= [];
+    w.rowScores.forEach((r, i) => { b[i] = Math.max(b[i] ?? -1, r.sc); });
   }
-  // Duplicates: best copies with exactly the same scored perks keep only one — the oldest (lowest item ID).
-  const groups = {};
+  // Each row keeps its best copy. Copies tied on a row with exactly the same scored perks keep only the oldest (lowest item ID);
+  // tied copies with different perks are all kept.
+  const winners = {};
+  for (const w of weapons) if (w.rowScores) w.rowScores.forEach((r, i) => {
+    if (r.sc !== best[key(w)][i]) return;
+    const sig = key(w) + "|" + i + "|" + r.matched.map(m => norm(m.perk)).sort().join(",");
+    const cur = winners[sig];
+    if (!cur || BigInt(w.id) < BigInt(cur.w.id)) winners[sig] = { w, i };
+  });
+  const keptRow = new Map();
+  for (const { w, i } of Object.values(winners)) if (!keptRow.has(w) || i < keptRow.get(w)) keptRow.set(w, i);
   for (const w of weapons) {
-    if (w.junk || w.score == null || w.score !== w.best) continue;
-    const sig = key(w) + "|" + w.matched.map(m => norm(m.perk)).sort().join(",");
-    (groups[sig] ||= []).push(w);
-  }
-  for (const g of Object.values(groups)) {
-    if (g.length < 2) continue;
-    g.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
-    const keep = g[0];
-    keep.why += ` · kept over ${g.length - 1} duplicate${g.length > 2 ? "s" : ""}`;
-    for (const w of g.slice(1)) {
-      w.junk = !(opt.crafted && w.crafted) && !(opt.locked && w.locked);
-      w.why = "duplicate of an older copy with the same perks" + (w.junk ? "" : ` · kept: ${opt.crafted && w.crafted ? "crafted" : "locked"}`);
+    if (!w.rowScores) {
+      w.junk = opt.unlisted; w.why = "not on the weapon list";
+    } else {
+      const b = best[key(w)];
+      // Show the row this copy is kept for; a junk copy shows the row it came closest on.
+      let i = keptRow.get(w);
+      if (i == null) {
+        i = 0;
+        w.rowScores.forEach((r, j) => { const gap = b[j] - r.sc, g0 = b[i] - w.rowScores[i].sc; if (gap < g0 || (gap === g0 && r.sc > w.rowScores[i].sc)) i = j; });
+      }
+      const r = w.rowScores[i];
+      w.tier = w.rows[i]; w.matched = r.matched; w.score = r.sc; w.best = b[i];
+      w.junk = !keptRow.has(w);
+      w.why = !w.junk ? "best copy" : w.rowScores.some((x, j) => x.sc === b[j]) ? "duplicate of an older copy with the same perks" : "a better copy exists";
     }
+    if (w.junk && opt.crafted && w.crafted) { w.junk = false; w.why += " · kept: crafted"; }
+    if (w.junk && opt.locked && w.locked) { w.junk = false; w.why += " · kept: locked"; }
   }
   return weapons;
 }
@@ -794,10 +809,11 @@ function render() {
         const wanted = [c.top, ...c.alts].filter(Boolean).map(norm);
         const have = new Set(opts.map(h => norm(pn(h))));
         // Red only while a wanted perk is still missing from this column; once all are here, extras are left alone.
+        // A wanted perk is green unless a perk ranked above it for this column is missing; then it's yellow.
         const allCovered = wanted.length && wanted.every(n => have.has(n));
         grid.append(group(opts.map(h => {
-          const n = norm(pn(h));
-          const cls = !wanted.length ? "none" : n === norm(c.top) ? "ok" : c.alts.some(a => norm(a) === n) ? "alt" : allCovered ? "none" : "bad";
+          const n = norm(pn(h)), rank = wanted.indexOf(n);
+          const cls = !wanted.length ? "none" : rank >= 0 ? (wanted.slice(0, rank).every(x => have.has(x)) ? "ok" : "alt") : allCovered ? "none" : "bad";
           return perkTile(cls, state.plugIcons[h], pn(h), pn(h)[0] || "?");
         })));
       }
@@ -1421,7 +1437,7 @@ async function scanArmor() {
 /* ==================== LIST EDITOR (dev) ====================
    Pick a weapon, click its perks in order of importance, save. The ranking is the list row: pick 1 = Priority 1, and so on,
    so scoring is unchanged. Saved in this browser (localStorage "d2v_mylist"); can be exported as a CSV in the sheet's format. */
-const ed = { name: null, hash: null, picks: [] };
+const ed = { name: null, hash: null, picks: [], rolls: [], roll: 0 };
 
 function edNamesIndex() {
   if (state.edIndex) return state.edIndex;
@@ -1458,15 +1474,44 @@ async function edOpen(name) {
   const base = norm(baseName(name));
   ed.versions = Object.entries(idx).filter(([n]) => norm(baseName(n)) === base).flatMap(([, hs]) => hs);
   await Promise.all(ed.versions.map(h => weaponMeta(h)));
+  if (ed.versions.length > 1) await loadWeaponPools(ed.versions.map(h => ({ hash: h, tier: true })));
   const season = h => state.weaponMetaCache?.[h]?.season || 0;
   ed.versions.sort((a, b) => season(b) - season(a));
   ed.hash = hashes.find(h => owned.has(h)) || hashes.slice().sort((a, b) => season(b) - season(a))[0];
   // Start from your saved ranking, else the sheet's row.
   const mine = myList()[norm(ed.name)];
-  const sheet = state.sheetTiers?.[norm(ed.name)]?.[0];
-  ed.picks = (mine?.prio || sheet?.prio || []).filter(Boolean);
-  $("edInfo").textContent = mine ? "Editing your saved ranking." : sheet ? "Starting from the sheet's ranking." : "Not ranked yet.";
+  const sheetRows = state.sheetTiers?.[norm(ed.name)] || [];
+  ed.rolls = mine ? rollsOf(mine).map(pad11) : sheetRows.map(r => pad11(r.prio));
+  edPickRoll(0);
+  $("edInfo").textContent = mine ? "Editing your saved ranking." : sheetRows.length ? "Starting from the sheet's ranking." : "Not ranked yet.";
   await edLoadPool();
+}
+
+/* Load roll i into the picker and set the roll menu and save buttons to match. */
+function edPickRoll(i) {
+  ed.roll = Math.max(0, Math.min(i, ed.rolls.length - 1));
+  ed.picks = (ed.rolls[ed.roll] || []).filter(Boolean);
+  edRollControls();
+}
+function edRollControls() {
+  const n = ed.rolls.length, sel = $("edRoll");
+  sel.hidden = n < 2;
+  sel.innerHTML = "";
+  ed.rolls.forEach((_, i) => sel.append(new Option(`Roll ${i + 1} of ${n}`, i, false, i === ed.roll)));
+  $("edSave").hidden = !n;
+  $("edSave").textContent = `Overwrite roll ${ed.roll + 1}`;
+  $("edSaveNew").textContent = n ? "Save as new roll" : "Save to my list";
+  $("edSaveNew").className = n ? "" : "primary";
+  $("edDelRoll").hidden = n < 2;
+}
+/* Your list replaces the sheet for this weapon, so every roll shown (the sheet's included) is saved together. */
+function edStoreRolls(msg) {
+  const mine = myList();
+  if (ed.rolls.length) mine[norm(ed.name)] = { name: ed.name, rolls: ed.rolls.map(pad11) };
+  else delete mine[norm(ed.name)];
+  edSaveList(mine);
+  edRollControls();
+  log(msg + " Scan again to use it.");
 }
 
 async function edLoadPool() {
@@ -1478,7 +1523,7 @@ async function edLoadPool() {
 
 /* Screenshot and flavor text aren't in the light item list, so they come from the weapon's full definition (cached). */
 async function weaponMeta(hash) {
-  const key = "d2v_wmeta3_" + state.manifestVersion;
+  const key = "d2v_wmeta4_" + state.manifestVersion;
   const cache = state.weaponMetaCache ||= (store.get(key) || {});
   if (!(hash in cache)) {
     try {
@@ -1495,6 +1540,7 @@ async function weaponMeta(hash) {
       }
       cache[hash] = {
         season,
+        watermark: d.iconWatermark || d.quality?.displayVersionWatermarkIcons?.[0] || "",
         shot: d.screenshot || "",
         slot: { 1498876634: "Kinetic", 2465295065: "Energy", 953998645: "Power" }[d.inventory?.bucketTypeHash] || "",
         element: { 1: "Kinetic", 2: "Arc", 3: "Solar", 4: "Void", 6: "Stasis", 7: "Strand" }[d.defaultDamageType] || "",
@@ -1536,15 +1582,29 @@ function edRender() {
   const owned = new Set((state.results || []).map(w => w.hash));
   vb.hidden = !(ed.versions && ed.versions.length > 1);
   vb.innerHTML = "<h4>All versions</h4>";
-  for (const h of ed.versions || []) {
+  // What tells same-named versions apart: element, frame, ammo, slot, origin trait, or how many perks it can roll.
+  const facts = h => {
+    const m = state.weaponMetaCache?.[h] || {}, cols = poolColumns(h);
+    const origin = cols.find(c => /origin/i.test(c.label));
+    return {
+      element: m.element || "", frame: m.frame || "", ammo: m.ammo || "", slot: m.slot || "",
+      origin: origin ? "Origin: " + origin.names.map(n => state.plugNames[nameToPlug()[n]] || n).join(" / ") : "No origin trait",
+      perks: cols.filter(c => c !== origin).reduce((sum, c) => sum + c.names.length, 0) + " perks",
+    };
+  };
+  const all = (ed.versions || []).map(facts);
+  const differs = all.length > 1 ? Object.keys(all[0]).filter(k => new Set(all.map(f => f[k])).size > 1) : [];
+  (ed.versions || []).forEach((h, vi) => {
     const vd = state.defs?.[h] || {}, vm = state.weaponMetaCache?.[h] || {};
     const row = document.createElement("div");
     row.className = "vrow" + (h === ed.hash ? " on" : "");
-    row.innerHTML = `${vd.icon ? `<img src="${BUNGIE + vd.icon}" alt="">` : ""}<span class="vn"></span>${owned.has(h) ? '<span class="own" title="You own this version">●</span>' : ""}${vm.season ? `<span class="ss">S${vm.season}</span>` : ""}`;
+    row.innerHTML = `${vd.icon ? `<img src="${BUNGIE + vd.icon}" alt="">` : ""}<span class="vn"></span>${owned.has(h) ? '<span class="own" title="You own this version">●</span>' : ""}${vm.season ? `<span class="ss">S${vm.season}</span>` : vm.watermark ? `<img class="wm" src="${BUNGIE + vm.watermark}" alt="" title="Season watermark">` : ""}`;
     row.querySelector(".vn").textContent = vd.name || "?";
+    const sub = differs.length ? differs.map(k => all[vi][k]).filter(Boolean).join(" · ") : `item ${h}`;
+    if (all.length > 1) row.querySelector(".vn").append(Object.assign(document.createElement("div"), { className: "vsub", textContent: sub }));
     row.onclick = () => { if (h !== ed.hash) { ed.hash = h; busy(edLoadPool); } };
     vb.append(row);
-  }
+  });
   const hero = $("edHero");
   hero.hidden = !d.shot;
   hero.innerHTML = d.shot ? `<img src="${BUNGIE + d.shot}" alt="">` : "";
@@ -1598,7 +1658,7 @@ function edRenderList() {
   $("edList").innerHTML = "";
   for (const n of names) {
     const d = document.createElement("div");
-    const nm = Object.assign(document.createElement("span"), { className: "nm", textContent: `${n} — ${mine[norm(n)].prio.filter(Boolean).length} perks` });
+    const nm = Object.assign(document.createElement("span"), { className: "nm", textContent: (r => `${n} — ${r.length > 1 ? r.length + " rolls" : (r[0] || []).filter(Boolean).length + " perks"}`)(rollsOf(mine[norm(n)])) });
     nm.onclick = () => { $("edSearch").value = n; busy(() => edOpen(n)); };
     const x = Object.assign(document.createElement("button"), { className: "xbtn", textContent: "×", title: "Remove from my list" });
     armedButton(x, "Delete?", () => {
@@ -1633,26 +1693,43 @@ function wireEditor() {
   $("edSearch").onfocus = () => { if (state.defs) edNamesIndex(); };
   $("edVersion").onchange = () => { ed.hash = Number($("edVersion").value); busy(edLoadPool); };
   $("edClear").onclick = () => { ed.picks = []; edRender(); };
+  $("edRoll").onchange = () => { edPickRoll(Number($("edRoll").value)); edRender(); };
   $("edSave").onclick = () => {
+    if (!ed.name || !ed.rolls.length) return;
+    if (!ed.picks.length) { log("Pick at least one perk before saving."); return; }
+    ed.rolls[ed.roll] = pad11(ed.picks);
+    edStoreRolls(`Saved roll ${ed.roll + 1} of ${ed.name} (${ed.picks.length} perks).`);
+  };
+  $("edSaveNew").onclick = () => {
     if (!ed.name) return;
     if (!ed.picks.length) { log("Pick at least one perk before saving."); return; }
-    const mine = myList();
-    mine[norm(ed.name)] = { name: ed.name, prio: Array.from({ length: 11 }, (_, k) => ed.picks[k] || "") };
-    edSaveList(mine);
-    log(`Saved ${ed.name} to your list (${ed.picks.length} perks). Scan again to use it.`);
+    ed.rolls.push(pad11(ed.picks));
+    ed.roll = ed.rolls.length - 1;
+    edStoreRolls(`Saved ${ed.name} roll ${ed.roll + 1} (${ed.picks.length} perks).`);
   };
+  armedButton($("edDelRoll"), "Delete roll?", () => {
+    if (ed.rolls.length < 2) return;
+    const gone = ed.roll + 1;
+    ed.rolls.splice(ed.roll, 1);
+    edPickRoll(ed.roll);
+    edRender();
+    edStoreRolls(`Deleted roll ${gone} of ${ed.name}.`);
+  });
   $("edRemove").onclick = () => {
     if (!ed.name) return;
     const mine = myList();
     delete mine[norm(ed.name)];
     edSaveList(mine);
+    ed.rolls = (state.sheetTiers?.[norm(ed.name)] || []).map(r => pad11(r.prio));
+    edPickRoll(0);
+    edRender();
     log(`Removed ${ed.name} from your list.`);
   };
   $("edImport").onclick = () => {
     const sheet = state.sheetTiers || {};
     const mine = myList();
     let n = 0;
-    for (const rows of Object.values(sheet)) { const r = rows[0]; if (!mine[norm(r.name)]) { mine[norm(r.name)] = { name: r.name, prio: r.prio }; n++; } }
+    for (const rows of Object.values(sheet)) { const r = rows[0]; if (!mine[norm(r.name)]) { mine[norm(r.name)] = { name: r.name, rolls: rows.map(x => x.prio) }; n++; } }
     edSaveList(mine);
     log(`Copied ${n} weapons from the sheet into your list (weapons you already had were left alone).`);
   };
@@ -1660,7 +1737,7 @@ function wireEditor() {
     const mine = myList();
     const q = v => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
     const lines = ["Weapon," + Array.from({ length: 11 }, (_, k) => "Priority " + (k + 1)).join(",")];
-    for (const e of Object.values(mine).sort((a, b) => a.name.localeCompare(b.name))) lines.push([e.name, ...e.prio].map(v => q(v || "")).join(","));
+    for (const e of Object.values(mine).sort((a, b) => a.name.localeCompare(b.name))) for (const p of rollsOf(e)) lines.push([e.name, ...pad11(p)].map(v => q(v || "")).join(","));
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
     a.download = "weapon-list.csv";
