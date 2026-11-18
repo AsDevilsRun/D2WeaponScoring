@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>D2 Vault Cleaner</title>
 <style>
-  :root { --bg:#14161a; --card:#1d2026; --line:#2c3038; --text:#e6e6e6; --dim:#9aa0aa; --accent:#d9b44a; --bad:#e06c6c; --good:#6cc28a; }
+  :root { --bg:#14161a; --card:#1d2026; --line:#2c3038; --text:#e6e6e6; --dim:#9aa0aa; --accent:#d9b44a; --bad:#e06c6c; --good:#6cc28a; --warn:#e0b54a; }
   * { box-sizing:border-box; }
   body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
   header { display:flex; justify-content:space-between; align-items:center; padding:12px 20px; border-bottom:1px solid var(--line); }
@@ -34,7 +34,6 @@
   th { text-align:left; color:var(--dim); font-weight:600; padding:4px 6px; border-bottom:1px solid var(--line); cursor:pointer; white-space:nowrap; }
   td { padding:5px 6px; border-top:1px solid var(--line); vertical-align:top; }
   td img { width:32px; height:32px; display:block; border-radius:3px; }
-  td.num { text-align:right; white-space:nowrap; }
   .perks { font-size:12px; color:var(--dim); }
   .tag { display:inline-block; font-size:11px; padding:0 6px; border-radius:9px; border:1px solid var(--line); margin-left:6px; }
   textarea { width:100%; min-height:70px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px; font:12px ui-monospace, monospace; resize:vertical; }
@@ -123,7 +122,6 @@
   .only button { padding:0 6px; border:none; background:none; color:var(--accent); font-size:14px; }
   .pagetabs { display:flex; gap:6px; margin-bottom:14px; }
   .pagetabs button.on { border-color:var(--accent); color:var(--accent); }
-  :root { --warn:#e0b54a; }
   .classcols { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-bottom:16px; }
   @media (max-width:900px){ .classcols { grid-template-columns:1fr; } }
   .classcol h3 { margin:0 0 8px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
@@ -141,11 +139,6 @@
   .slot.part { border-color:var(--warn); } .slot.part::after { background:rgba(224,181,74,.25); }
   .slot.miss { border-color:var(--bad); border-style:dashed; } .slot.miss::after { background:rgba(224,108,108,.12); }
   .slot .lbl { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--bad); font-weight:600; }
-  .issues { list-style:none; margin:6px 0 0; padding:0; font-size:12px; }
-  .issues li { padding:1px 0; }
-  .issues li.part { color:var(--warn); }
-  .issues li.miss { color:var(--bad); }
-  .spares { font-size:11px; color:var(--dim); margin-top:4px; }
   td img.st-junk { outline:2px solid var(--bad); } td img.st-part { outline:2px solid var(--warn); } td img.st-ok { outline:2px solid var(--good); }
 </style>
 </head>
@@ -276,7 +269,7 @@
       <h2>Settings</h2>
       <div class="settings">
         <label for="armorUrl">Armor list CSV</label>
-        <input type="text" id="armorUrl" placeholder="Your armor list (Class, Set, Archetype, Tertiary, Tuning), published to the web as CSV">
+        <input type="text" id="armorUrl" placeholder="Leave empty to use the built-in armor list">
       </div>
       <div class="rules">
         <label><input type="checkbox" id="optArmorUnlisted" checked> Armor from sets not on the list is junk</label>
@@ -303,7 +296,8 @@
         <button id="armorTabJunk" class="small on">Junk</button>
         <button id="armorTabKeep" class="small">Keeping</button>
         <button id="armorTabAll" class="small">All</button>
-        <input type="text" id="armorFilter" class="filter" placeholder="Filter by name or set">
+        <input type="text" id="armorFilter" class="filter" placeholder="Filter by name or set (click a piece for its copies)">
+        <span id="armorOnlyChip" class="only" hidden><span id="armorOnlyName"></span><button id="armorOnlyClear" title="Show all">×</button></span>
       </div>
       <table>
         <thead><tr><th></th><th>Armor</th><th>Details</th><th>Location</th></tr></thead>
@@ -320,7 +314,7 @@
 </main>
 
 <script>
-/* ---------- config ----------
+/* ==================== SETUP ====================
    Your own Bungie app (bungie.net/en/Application): OAuth client type Public, redirect URL = this page's address,
    origin header = this site's origin, scope "Read your Destiny 2 information".
    The key only works from the site's own origin (asdevilsrun.github.io), not from a file on your computer. */
@@ -338,24 +332,38 @@ const DEV = (() => {
     return sessionStorage.getItem("d2v_dev") === "1";
   } catch { return q != null && q !== "0"; }
 })();
-/* Your weapon list (Weapon, Priority 1–11), published to the web as CSV. Used unless a different link is entered in Settings. */
+/* Your lists, published to the web as CSV. The weapon and armor links are used unless a different one is entered in Settings.
+   Weapon list: Weapon, Priority 1–11. Armor list: Class, Set, Archetype, Tertiary, Tuning. Exotic list: Class, Exotic, Archetype, Tertiary. */
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
+const EXOTIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=133060317&single=true&output=csv";
+const ARMOR_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1186443884&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-10 22:30";
+const BUILD = "2026-11-17 21:30";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
-const ITEMTYPE_WEAPON = 3;
-const TIER_LEGENDARY = 5;
+const ITEMTYPE_ARMOR = 2, ITEMTYPE_WEAPON = 3;
+const TIER_LEGENDARY = 5, TIER_EXOTIC = 6;
 
+/* Lookups that failed this session: retried on the next visit, never saved as if they had no data. */
+const failed = new Set();
+const state = { token: null, membership: null, defs: null, plugNames: null, results: [], view: "junk", armorView: "junk", sort: { key: "name", dir: 1 } };
+
+/* ==================== HELPERS ==================== */
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const cleanPerk = n => String(n).replace(/\s*\(enhanced\)\s*$/i, "").replace(/\s+enhanced$/i, "").replace(/^enhanced\s+/i, "").trim();
 const norm = s => String(s).toLowerCase().replace(/[‘’`]/g, "'").replace(/\s+/g, " ").trim();
+/* Small DOM helper: el("span", { className: "tag", textContent: "locked" }, ...children). */
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+const CLASS_NAMES = ["Titan", "Hunter", "Warlock"]; // by Bungie's classType
+const CLASS_NUM = { titan: 0, hunter: 1, warlock: 2 };
+
 /* Browser storage is about 5 MB per site, shared by everything here. Caches and saved DIM exports can be rebuilt;
    your list and settings can't. So a save marked important that doesn't fit clears the rebuildable data and tries again.
    set() returns whether the value was saved. */
-const REBUILDABLE = /^d2v_(wpools|wperk|plugs|wmeta\d*)_|^d2v_dev_(weapons|armor)$/;
+const CACHE_KEY = /^d2v_(wpools|wperk|plugs|wmeta\d*)_/; // per-game-update caches, suffixed with the manifest version
+const REBUILDABLE = new RegExp(CACHE_KEY.source + "|^d2v_dev_(weapons|armor)$");
 const store = {
   get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
   set(k, v, important = false) {
@@ -371,21 +379,76 @@ const store = {
   },
   del(k) { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } },
 };
-/* Caches from older game updates are dead weight once the manifest version is known. */
+/* Caches of Bungie lookups, one per game update. Older updates' caches are dropped once the manifest version is known. */
+const cacheKey = prefix => prefix + "_" + state.manifestVersion;
+const loadCache = prefix => store.get(cacheKey(prefix)) || {};
+const saveCache = (prefix, data) => store.set(cacheKey(prefix), data);
 function pruneCaches(version) {
-  try { for (const k of Object.keys(localStorage)) if (/^d2v_(wpools|wperk|plugs|wmeta\d*)_/.test(k) && !k.endsWith("_" + version)) localStorage.removeItem(k); }
+  try { for (const k of Object.keys(localStorage)) if (CACHE_KEY.test(k) && !k.endsWith("_" + version)) localStorage.removeItem(k); }
   catch { /* storage unavailable */ }
 }
 function log(msg) {
-  const el = $("log");
-  el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el.textContent;
+  const box = $("log");
+  box.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + box.textContent;
 }
 
-/* Lookups that failed this session: retried on the next visit, never saved as if they had no data. */
-const failed = new Set();
-const state = { token: null, membership: null, defs: null, plugNames: null, results: [], view: "junk", sort: { key: "name", dir: 1 } };
+/* A published sheet (or any CSV link), giving up after 15 seconds. */
+async function fetchText(url) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  try { return await (await fetch(url, { signal: ctl.signal, cache: "no-store" })).text(); }
+  finally { clearTimeout(timer); }
+}
+/* Rows of cells; quoted cells may hold commas, quotes ("") and line breaks. */
+function parseCSV(text) {
+  const rows = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
 
-/* ---------- Bungie ---------- */
+/* Page bits shared by the weapon and armor pages. */
+function renderStats(box, pairs) {
+  box.replaceChildren(...pairs.map(([label, n]) => el("div", {}, el("b", { textContent: n }), " ", el("span", { className: "muted", textContent: label }))));
+}
+const dimSearch = items => (items.length ? `-tag:keep (${items.map(x => "id:" + x.id).join(" OR ")})` : "");
+const tag = text => el("span", { className: "tag", textContent: text });
+const icon = (path, props = {}) => el("img", { src: BUNGIE + path, alt: "", ...props });
+
+
+/* ==================== BUNGIE ==================== */
+/* One item's full definition (sockets, screenshot, season…), which the light item list leaves out. */
+const itemDef = hash => bungie(`/Destiny2/Manifest/DestinyInventoryItemDefinition/${hash}/`);
+/* One of the manifest's whole-table JSON files, by name (e.g. "DestinyPlugSetDefinition"). */
+async function manifestFile(name) {
+  const res = await fetch(BUNGIE + state.manifestPaths[name]);
+  if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
+  return res.json();
+}
+/* Runs fn on each item, at most `limit` at a time (Bungie throttles bursts). */
+async function eachLimited(items, limit, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]); }));
+}
+/* Every item instance in a profile response, with where it is: vault, a character, or equipped on one. */
+function* profileItems(r) {
+  const chars = r.characters?.data || {};
+  const who = cid => CLASS_NAMES[chars[cid]?.classType] || "Character";
+  for (const it of r.profileInventory?.data?.items || []) yield [it, "Vault"];
+  for (const [cid, inv] of Object.entries(r.characterInventories?.data || {})) for (const it of inv.items) yield [it, who(cid)];
+  for (const [cid, inv] of Object.entries(r.characterEquipment?.data || {})) for (const it of inv.items) yield [it, who(cid) + " (equipped)"];
+}
+
 async function bungie(path) {
   const headers = { "X-API-Key": CONFIG.apiKey };
   if (state.token) headers.Authorization = "Bearer " + state.token.access;
@@ -454,7 +517,7 @@ async function loadDefs() {
   state.manifestPaths = man.jsonWorldComponentContentPaths.en;
   pruneCaches(man.version);
   log("Downloading item definitions…");
-  const raw = await (await fetch(BUNGIE + man.jsonWorldComponentContentPaths.en.DestinyInventoryItemLiteDefinition)).json();
+  const raw = await manifestFile("DestinyInventoryItemLiteDefinition");
   const defs = {}, plugs = {}, armorDefs = {}, plugInfo = {}, icons = {}, nameIcon = {}, types = {}, iconFallback = {};
   for (const [h, d] of Object.entries(raw)) {
     // Every item's name: perks are items too, and the light item list doesn't always include their plug details.
@@ -466,11 +529,11 @@ async function loadDefs() {
       const t = d.itemTypeDisplayName || "";
       if (n && !nameIcon[n] && (PERK_TYPE.test(t) || /perk|origin/i.test(t)) && !NOT_PERK_TYPE.test(t)) nameIcon[n] = d.displayProperties.icon;
       // Perks with type names we don't recognize (new weapon types, e.g. crossbow bolts): used only if nothing better turns up.
-      else if (n && d.itemType !== ITEMTYPE_WEAPON && d.itemType !== 2 && !NOT_PERK_TYPE.test(t)) iconFallback[n] ||= d.displayProperties.icon; }
+      else if (n && d.itemType !== ITEMTYPE_WEAPON && d.itemType !== ITEMTYPE_ARMOR && !NOT_PERK_TYPE.test(t)) iconFallback[n] ||= d.displayProperties.icon; }
     if (d.itemType === ITEMTYPE_WEAPON && d.inventory) {
       defs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, type: d.itemTypeDisplayName || "", recipe: !!d.inventory.recipeItemHash };
     }
-    if (d.itemType === 2 && d.inventory) {
+    if (d.itemType === ITEMTYPE_ARMOR && d.inventory) {
       armorDefs[h] = { name: d.displayProperties?.name || "?", icon: d.displayProperties?.icon || "", tier: d.inventory.tierType, cls: d.classType, bucket: d.inventory.bucketTypeHash, coll: d.collectibleHash || 0 };
     }
     if (d.plug && d.investmentStats) plugInfo[h] = slimArmorPlug(d);
@@ -491,15 +554,12 @@ async function loadWeapons() {
   const m = state.membership;
   const r = await bungie(`/Destiny2/${m.type}/Profile/${m.id}/?components=102,200,201,205,300,305,310`);
   state.profileRaw = r;
-  const chars = r.characters?.data || {};
-  const CLASS_NAME = { 0: "Titan", 1: "Hunter", 2: "Warlock" };
-  const instances = r.itemComponents?.instances?.data || {};
   const sockets = r.itemComponents?.sockets?.data || {};
   const reusable = r.itemComponents?.reusablePlugs?.data || {};
   const out = [];
-  const add = (it, where) => {
+  for (const [it, where] of profileItems(r)) {
     const def = state.defs[it.itemHash];
-    if (!def || !it.itemInstanceId || def.tier !== TIER_LEGENDARY) return;
+    if (!def || !it.itemInstanceId || def.tier !== TIER_LEGENDARY) continue;
     const names = new Set(), socks = [];
     (sockets[it.itemInstanceId]?.sockets || []).forEach((s, idx) => {
       const opts = [];
@@ -516,36 +576,16 @@ async function loadWeapons() {
       // Bungie's "crafted" flag is also set on enhanced weapons; only weapons with a crafting pattern are truly crafted (as DIM decides).
       crafted: (it.state & 8) === 8 && def.recipe,
       enhanced: (it.state & 8) === 8 && !def.recipe,
-      power: instances[it.itemInstanceId]?.primaryStat?.value || 0,
     });
-  };
-  for (const it of r.profileInventory?.data?.items || []) add(it, "Vault");
-  for (const [cid, inv] of Object.entries(r.characterInventories?.data || {})) for (const it of inv.items) add(it, CLASS_NAME[chars[cid]?.classType] || "Character");
-  for (const [cid, inv] of Object.entries(r.characterEquipment?.data || {})) for (const it of inv.items) add(it, (CLASS_NAME[chars[cid]?.classType] || "Character") + " (equipped)");
+  }
   const withSockets = out.filter(w => sockets[w.id]).length;
   const withOptions = out.filter(w => reusable[w.id]).length;
   log(`Perks: sockets for ${withSockets} of ${out.length} weapons, perk options for ${withOptions}; ${out.filter(w => w.perks.size).length} have named perks.`);
   return out;
 }
 
+/* ==================== WEAPONS ==================== */
 /* ---------- weapon list ---------- */
-function parseCSV(text) {
-  const rows = []; let row = [], cell = "", q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) {
-      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
-      else if (c === '"') q = false;
-      else cell += c;
-    } else if (c === '"') q = true;
-    else if (c === ",") { row.push(cell); cell = ""; }
-    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
-    else if (c !== "\r") cell += c;
-  }
-  if (cell || row.length) { row.push(cell); rows.push(row); }
-  return rows;
-}
-
 /* A weapon can have several rows (different roll targets, e.g. PvE and PvP); each row keeps its own best copy.
    Points, as in your sheet: Priority 1 = 25, Priority 2 = 20, then the filled Priorities 3–11 in order get 9, 8, 7, … */
 function tierRow(name, prio) {
@@ -569,13 +609,7 @@ const rollsOf = e => (e?.rolls || (e?.prio ? [e.prio] : [])).filter(p => p.some(
 const pad11 = picks => Array.from({ length: 11 }, (_, k) => picks[k] || "");
 
 async function loadTiered() {
-  const url = $("tieredUrl").value.trim() || TIERED_CSV;
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
-  let text;
-  try { text = await (await fetch(url, { signal: ctl.signal, cache: "no-store" })).text(); }
-  finally { clearTimeout(timer); }
-  const rows = parseCSV(text);
+  const rows = parseCSV(await fetchText($("tieredUrl").value.trim() || TIERED_CSV));
   const head = (rows[0] || []).map(norm);
   const col = name => head.indexOf(norm(name));
   const wi = col("Weapon");
@@ -614,6 +648,24 @@ const PERK_TYPE = /barrel|magazine|trait|scope|sight|blade|guard|bowstring|arrow
 const NOT_PERK_TYPE = /shader|ornament|tracker|masterwork|mod\b|memento|catalyst|intrinsic|transmat|emblem|projection|focus/i; // "Blade Focus" = glaive mod sockets
 const plugType = h => state.plugTypes?.[h] || "";
 const isPerkPlug = h => PERK_TYPE.test(plugType(h)) && !NOT_PERK_TYPE.test(plugType(h));
+/* Name -> plug hash, for icons and types of perks known only by name (DIM exports, list editor). */
+function nameToPlug() {
+  if (state.nameHash) return state.nameHash;
+  const out = {};
+  for (const [h, t] of Object.entries(state.plugTypes || {})) {
+    if (!PERK_TYPE.test(t) || NOT_PERK_TYPE.test(t)) continue;
+    const n = norm(state.plugNames[h] || "");
+    if (n && !out[n]) out[n] = Number(h);
+  }
+  // Second pass: plugs with type names we don't recognize (new weapon types), if not mods, shaders and the like.
+  for (const [h, t] of Object.entries(state.plugTypes || {})) {
+    if (NOT_PERK_TYPE.test(t)) continue;
+    const n = norm(state.plugNames[h] || "");
+    if (n && !out[n]) out[n] = Number(h);
+  }
+  return (state.nameHash = out);
+}
+
 
 /* The five columns on this copy: barrel-like, magazine-like, trait 1, trait 2, origin (any may be missing). */
 function perkSockets(w) {
@@ -627,44 +679,35 @@ function perkSockets(w) {
 }
 
 /* Every perk each socket can roll, from Bungie's item and plug set definitions (cached per game update). */
+const WEAPON_PERKS_CAT = 4241085061; // socket category "Weapon Perks"
 async function loadWeaponPools(weapons) {
-  const key = "d2v_wpools_" + state.manifestVersion;
-  const cache = state.weaponPools ||= (store.get(key) || {});
-  const pkey = "d2v_wperk_" + state.manifestVersion;
-  const perkIdx = state.perkIdx ||= (store.get(pkey) || {});
+  const cache = state.weaponPools ||= loadCache("d2v_wpools");
+  const perkIdx = state.perkIdx ||= loadCache("d2v_wperk");
   const hashes = [...new Set(weapons.filter(w => w.tier).map(w => w.hash))].filter(h => (!(h in cache) || !(h in perkIdx)) && !failed.has("w" + h));
   if (!hashes.length) return;
   log(`Reading perk pools for ${hashes.length} weapons (once per game update)…`);
   // Without plug sets every pool would be missing its random perks, so stop here (and try again next scan) rather than cache that.
-  if (!state.plugSets) {
-    const res = await fetch(BUNGIE + state.manifestPaths.DestinyPlugSetDefinition);
-    if (!res.ok) throw new Error(`plug sets: HTTP ${res.status}`);
-    state.plugSets = await res.json();
-  }
+  state.plugSets ||= await manifestFile("DestinyPlugSetDefinition");
   const setNames = ps => (state.plugSets[ps]?.reusablePlugItems || []).map(p => norm(state.plugNames[p.plugItemHash] || "")).filter(Boolean);
-  let i = 0;
-  await Promise.all(Array.from({ length: Math.min(6, hashes.length) }, async () => {
-    while (i < hashes.length) {
-      const h = hashes[i++];
-      try {
-        const d = await bungie(`/Destiny2/Manifest/DestinyInventoryItemDefinition/${h}/`);
-        const pools = {};
-        (d.sockets?.socketEntries || []).forEach((e, idx) => {
-          const names = new Set([...setNames(e.randomizedPlugSetHash), ...setNames(e.reusablePlugSetHash),
-            ...(e.reusablePlugItems || []).map(p => norm(state.plugNames[p.plugItemHash] || "")), norm(state.plugNames[e.singleInitialItemHash] || "")]);
-          names.delete("");
-          if (names.size) pools[idx] = [...names];
-        });
-        cache[h] = pools;
-        // Socket indexes Bungie groups as "Weapon Perks" (barrel, magazine, traits, origin…), in order.
-        perkIdx[h] = (d.sockets?.socketCategories || []).find(c => c.socketCategoryHash === 4241085061)?.socketIndexes || null;
-      } catch (e) { failed.add("w" + h); }
-    }
-  }));
+  await eachLimited(hashes, 6, async h => {
+    try {
+      const d = await itemDef(h);
+      const pools = {};
+      (d.sockets?.socketEntries || []).forEach((e, idx) => {
+        const names = new Set([...setNames(e.randomizedPlugSetHash), ...setNames(e.reusablePlugSetHash),
+          ...(e.reusablePlugItems || []).map(p => norm(state.plugNames[p.plugItemHash] || "")), norm(state.plugNames[e.singleInitialItemHash] || "")]);
+        names.delete("");
+        if (names.size) pools[idx] = [...names];
+      });
+      cache[h] = pools;
+      // Socket indexes Bungie groups as "Weapon Perks" (barrel, magazine, traits, origin…), in order.
+      perkIdx[h] = (d.sockets?.socketCategories || []).find(c => c.socketCategoryHash === WEAPON_PERKS_CAT)?.socketIndexes || null;
+    } catch { failed.add("w" + h); }
+  });
   const misses = hashes.filter(h => failed.has("w" + h)).length;
   if (misses) log(`Couldn't read perk pools for ${misses} weapon${misses > 1 ? "s" : ""}; they'll be tried again next visit.`);
-  store.set(key, cache);
-  store.set(pkey, perkIdx);
+  saveCache("d2v_wpools", cache);
+  saveCache("d2v_wperk", perkIdx);
 }
 
 /* Fallback pools: perks seen on your own copies, by socket. */
@@ -700,12 +743,10 @@ function perkColumns(w) {
   return cols.map(c => ({ col: c.col, sock: c.sock, top: c.wanted[0] || "", alts: c.wanted.slice(1) }));
 }
 
-function perkTile(cls, icon, title, fallback = "") {
-  const d = document.createElement("div");
-  d.className = "perk " + cls;
-  d.title = title;
-  if (icon) { const img = document.createElement("img"); img.src = BUNGIE + icon; img.alt = ""; d.append(img); }
-  else if (fallback) d.append(Object.assign(document.createElement("span"), { className: "q", textContent: fallback }));
+function perkTile(cls, iconPath, title, fallback = "") {
+  const d = el("div", { className: "perk " + cls, title });
+  if (iconPath) d.append(icon(iconPath));
+  else if (fallback) d.append(el("span", { className: "q", textContent: fallback }));
   return d;
 }
 
@@ -771,18 +812,16 @@ function render() {
   const all = state.results;
   const junk = all.filter(w => w.junk);
   $("results").hidden = false;
-  const stats = [
+  const excluded = new Set(store.get("d2v_excluded") || []);
+  const inQuery = junk.filter(w => !excluded.has(w.id));
+  renderStats($("stats"), [
     ["Legendary weapons", all.length],
     ["Junk", junk.length],
     ["Below best copy", junk.filter(w => w.score != null).length],
     ["Not on list", junk.filter(w => w.score == null).length],
-  ];
-  $("stats").innerHTML = "";
-  for (const [k, v] of stats) { const d = document.createElement("div"); d.innerHTML = `<b>${v}</b> <span class="muted">${k}</span>`; $("stats").append(d); }
-  const excluded = new Set(store.get("d2v_excluded") || []);
-  const inQuery = junk.filter(w => !excluded.has(w.id));
-  $("dimQuery").value = inQuery.length ? `-tag:keep (${inQuery.map(w => "id:" + w.id).join(" OR ")})` : "";
-  if (junk.length !== inQuery.length) $("stats").append(Object.assign(document.createElement("div"), { innerHTML: `<b>${junk.length - inQuery.length}</b> <span class="muted">Left out of the DIM search</span>` }));
+    ...(junk.length !== inQuery.length ? [["Left out of the DIM search", junk.length - inQuery.length]] : []),
+  ]);
+  $("dimQuery").value = dimSearch(inQuery);
 
   const f = norm($("filter").value || "");
   let rows = state.view === "junk" ? junk : state.view === "keep" ? all.filter(w => !w.junk) : all;
@@ -793,91 +832,81 @@ function render() {
   const { key, dir } = state.sort;
   const val = w => key === "name" ? w.def.name : w.where;
   rows = rows.slice().sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : (b.score ?? -1) - (a.score ?? -1)) * dir);
+  $("rows").replaceChildren(...rows.map(w => weaponRow(w, excluded)));
+}
 
-  const tb = $("rows");
-  tb.innerHTML = "";
-  for (const w of rows) {
-    const tr = document.createElement("tr");
-    tr.className = w.junk ? "junkrow" : "keeprow";
-    const tdI = document.createElement("td");
-    if (w.def.icon) { const img = document.createElement("img"); img.src = BUNGIE + w.def.icon; img.alt = ""; tdI.append(img); }
-    const tdN = document.createElement("td");
-    const nm = document.createElement("span");
-    nm.className = "wname";
-    nm.textContent = w.def.name;
-    nm.title = "Click to show only this weapon's copies; click again to show everything";
-    nm.onclick = () => {
-      const k = norm(baseName(w.def.name));
-      state.only = state.only === k ? null : k;
+function weaponRow(w, excluded) {
+  const tr = el("tr", { className: w.junk ? "junkrow" : "keeprow" });
+  const tdI = el("td");
+  if (w.def.icon) tdI.append(icon(w.def.icon));
+  const nm = el("span", { className: "wname", textContent: w.def.name, title: "Click to show only this weapon's copies; click again to show everything" });
+  nm.onclick = () => {
+    const k = norm(baseName(w.def.name));
+    state.only = state.only === k ? null : k;
+    render();
+  };
+  const tdN = el("td", {}, nm);
+  if (w.crafted) tdN.append(tag("crafted"));
+  if (w.enhanced) tdN.append(tag("enhanced"));
+  if (w.locked) tdN.append(tag("locked"));
+  tdN.append(el("div", { className: w.junk ? "bad" : "muted", textContent: (w.junk ? "Junk — " : "") + w.why }));
+  const tdP = el("td", { className: "perks" });
+  const grid = perkGrid(w);
+  if (grid) tdP.append(grid); else tdP.textContent = "Not on the weapon list";
+  const tdW = el("td", { className: "muted", textContent: w.where });
+  const tdX = el("td", { className: "excl" });
+  if (w.junk) {
+    const inSearch = !excluded.has(w.id);
+    const cb = el("input", { type: "checkbox", checked: inSearch, title: inSearch ? "In the DIM search — untick to leave this copy out" : "Left out of the DIM search — tick to include" });
+    cb.onchange = () => {
+      const ex = new Set(store.get("d2v_excluded") || []);
+      if (cb.checked) ex.delete(w.id); else ex.add(w.id);
+      store.set("d2v_excluded", [...ex]);
       render();
     };
-    tdN.append(nm);
-    if (w.crafted) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "crafted" }));
-    if (w.enhanced) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "enhanced" }));
-    if (w.locked) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "locked" }));
-    const sub = document.createElement("div");
-    sub.className = w.junk ? "bad" : "muted";
-    sub.textContent = (w.junk ? "Junk — " : "") + w.why;
-    tdN.append(sub);
-    const tdP = document.createElement("td"); tdP.className = "perks";
-    const cols = perkColumns(w);
-    if (cols) {
-      const grid = document.createElement("div");
-      grid.className = "perkgrid";
-      grid.style.gridTemplateColumns = `auto repeat(${cols.length}, auto)`;
-      const pn = h => state.plugNames[h] || "";
-      // Icons of perks seen on your weapons beat the name lookup.
-      const seen = {};
-      for (const sk of w.sockets) for (const h of sk.options) if (!seen[norm(pn(h))] && state.plugIcons[h]) seen[norm(pn(h))] = state.plugIcons[h];
-      const iconFor = name => seen[norm(name)] || state.nameIcon[norm(name)] || "";
-      const group = tiles => { const g = document.createElement("div"); g.className = "ps"; g.append(...tiles); return g; };
-      grid.append(document.createElement("span"));
-      for (const c of cols) grid.append(Object.assign(document.createElement("span"), { className: "gl", textContent: c.col.label }));
-      // Wanted: your perks for each column, best first.
-      grid.append(Object.assign(document.createElement("span"), { className: "rl", textContent: "Wanted" }));
-      for (const c of cols) {
-        const wanted = [c.top, ...c.alts].filter(Boolean);
-        grid.append(group(wanted.length ? wanted.map(n => perkTile("want", iconFor(n), n, n[0])) : [perkTile("none", "", "Nothing listed", "–")]));
-      }
-      // Has: what this copy has in each column (every option, if the socket has more than one).
-      grid.append(Object.assign(document.createElement("span"), { className: "rl", textContent: "Has" }));
-      for (const c of cols) {
-        if (!c.sock) { grid.append(group([perkTile("none", "", "This weapon has no socket for this", "–")])); continue; }
-        const opts = c.sock.options.length ? c.sock.options : [c.sock.plugged];
-        const wanted = [c.top, ...c.alts].filter(Boolean).map(norm);
-        const have = new Set(opts.map(h => norm(pn(h))));
-        // Red only while a wanted perk is still missing from this column; once all are here, extras are left alone.
-        // A wanted perk is green unless a perk ranked above it for this column is missing; then it's yellow.
-        const allCovered = wanted.length && wanted.every(n => have.has(n));
-        grid.append(group(opts.map(h => {
-          const n = norm(pn(h)), rank = wanted.indexOf(n);
-          const cls = !wanted.length ? "none" : rank >= 0 ? (wanted.slice(0, rank).every(x => have.has(x)) ? "ok" : "alt") : allCovered ? "none" : "bad";
-          return perkTile(cls, state.plugIcons[h], pn(h), pn(h)[0] || "?");
-        })));
-      }
-      tdP.append(grid);
-    } else {
-      tdP.textContent = "Not on the weapon list";
-    }
-    const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = w.where;
-    const tdX = document.createElement("td"); tdX.className = "excl";
-    if (w.junk) {
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = !excluded.has(w.id);
-      cb.title = cb.checked ? "In the DIM search — untick to leave this copy out" : "Left out of the DIM search — tick to include";
-      cb.onchange = () => {
-        const ex = new Set(store.get("d2v_excluded") || []);
-        if (cb.checked) ex.delete(w.id); else ex.add(w.id);
-        store.set("d2v_excluded", [...ex]);
-        render();
-      };
-      tdX.append(cb);
-      if (!cb.checked) tr.classList.add("excluded");
-    }
-    tr.append(tdI, tdN, tdP, tdW, tdX);
-    tb.append(tr);
+    tdX.append(cb);
+    if (!inSearch) tr.classList.add("excluded");
   }
+  tr.append(tdI, tdN, tdP, tdW, tdX);
+  return tr;
+}
+
+/* Wanted perks (from your list) over the perks this copy has, column by column. Null if the weapon isn't on the list. */
+function perkGrid(w) {
+  const cols = perkColumns(w);
+  if (!cols) return null;
+  const grid = el("div", { className: "perkgrid" });
+  grid.style.gridTemplateColumns = `auto repeat(${cols.length}, auto)`;
+  const pn = h => state.plugNames[h] || "";
+  // Icons of perks seen on your weapons beat the name lookup.
+  const seen = {};
+  for (const sk of w.sockets) for (const h of sk.options) if (!seen[norm(pn(h))] && state.plugIcons[h]) seen[norm(pn(h))] = state.plugIcons[h];
+  const iconFor = name => seen[norm(name)] || state.nameIcon[norm(name)] || "";
+  const group = tiles => el("div", { className: "ps" }, ...tiles);
+  grid.append(el("span"), ...cols.map(c => el("span", { className: "gl", textContent: c.col.label })));
+  // Wanted: your perks for each column, best first.
+  grid.append(el("span", { className: "rl", textContent: "Wanted" }));
+  for (const c of cols) {
+    const wanted = [c.top, ...c.alts].filter(Boolean);
+    grid.append(group(wanted.length ? wanted.map(n => perkTile("want", iconFor(n), n, n[0])) : [perkTile("none", "", "Nothing listed", "–")]));
+  }
+  // Has: what this copy has in each column (every option, if the socket has more than one).
+  grid.append(el("span", { className: "rl", textContent: "Has" }));
+  for (const c of cols) {
+    if (!c.sock) { grid.append(group([perkTile("none", "", "This weapon has no socket for this", "–")])); continue; }
+    const opts = c.sock.options.length ? c.sock.options : [c.sock.plugged];
+    const wanted = [c.top, ...c.alts].filter(Boolean).map(norm);
+    const have = new Set(opts.map(h => norm(pn(h))));
+    // Red only while a wanted perk is still missing from this column; once all are here, extras are left alone.
+    // A wanted perk is green unless a perk ranked above it for this column is missing; then it's yellow.
+    const allCovered = wanted.length && wanted.every(n => have.has(n));
+    grid.append(group(opts.map(h => {
+      const n = norm(pn(h)), rank = wanted.indexOf(n);
+      const cls = !wanted.length ? "none" : rank >= 0 ? (wanted.slice(0, rank).every(x => have.has(x)) ? "ok" : "alt") : allCovered ? "none" : "bad";
+      return perkTile(cls, state.plugIcons[h], pn(h), pn(h)[0] || "?");
+    })));
+  }
+  return grid;
 }
 
 /* ==================== ARMOR ====================
@@ -885,8 +914,6 @@ function render() {
    Rows with the same class and set make one 5-piece target (rows 6–10 a second one, and so on).
    Which slot fills which row doesn't matter. For each target the page keeps the best set it can build from your
    armor (partial if you don't have it all yet); every other legendary armor piece is junk. */
-const EXOTIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=133060317&single=true&output=csv"; // exotic armor list (Class, Exotic, Archetype, Tertiary)
-const ARMOR_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1186443884&single=true&output=csv"; // your armor list, published to the web as CSV
 const STAT = { weapons: 2996146975, health: 392767087, class: 1943323491, grenade: 1735777505, super: 144602215, melee: 4244567218 };
 const STAT_NAME = Object.fromEntries(Object.entries(STAT).map(([k, v]) => [v, k[0].toUpperCase() + k.slice(1)]));
 const statKey = s => { const n = norm(s).replace(/s$/, ""); return n === "weapon" ? "weapons" : n; };
@@ -896,31 +923,28 @@ const ARCHETYPE_NAMES = new Set(["brawler", "bulwark", "demolitionist", "grenadi
 const TUNING_STAT = {309000506:1735777505,311164277:4244567218,323635379:1943323491,388618952:392767087,455024236:1735777505,534630542:4244567218,673231129:144602215,691392383:2996146975,891771298:2996146975,957763733:1943323491,1510949672:1943323491,1672416975:1735777505,1879022254:1943323491,1918710127:2996146975,1922571986:1735777505,2125798995:392767087,2244422610:144602215,3121760799:2996146975,3284443097:2996146975,3310526732:392767087,3554800389:144602215,3681082702:392767087,3946669007:144602215,4020349587:4244567218,4026414261:144602215,4030660414:1943323491,4088823605:392767087,4116389173:1735777505,4164883102:4244567218,4210715468:4244567218};
 /* Set names by the activities they drop from and their bonus names (Endgame Analysis + Data Compendium), so "Spire" and "High Noon" find TM Custom. */
 const SET_ALIASES = {"AION Adapter":["Kepler","Mythic","Force Absorption","Reactive Shock"],"AION Renewal":["Kepler","Reactive Booster","Force Converter"],"Apostate's Blade":["Pit of Heresy","Regenerative Threshold","Melee Conduction"],"Atheon's Memory":["Vault of Glass","Collective Power","Radiolaria Breach"],"Bushido":["Pinnacle Ops","Xûr","Iaido","Unfaltering Focus"],"CODA":["Prophecy","So Very Thin","Between Poles"],"Circuit":["Sparrow Racing League","Revving Up","Dielectric Drift"],"Collective Psyche":["Desert Perpetual","Doppler Effect","Accretion"],"Crota's Memory":["Crota's End","Power of the Son","Cursed Fist"],"Cruel Electrum":["Trials","Trials of Osiris","Primary Survivor","Primary Phantom"],"Crystocrene":["Europa","Resupply","From the Storm"],"Cyberserpent Null":["Gambit","Bountiful Munitions","Adrenal Rush"],"Dark Age":["Warlord's Ruin","Healing Initiative","Taking Initiative"],"Deep Explorer":["Duality","Bittersweet","Built Bitter"],"Disaster Corps":["Crucible","Legacy Crucible Vendor","Pleas Heard","Magnificent Duty"],"Dreambane":["Moon","Nightmarish Resilience","Nightmarish Power"],"Eutechnology":["Arena","Arena/Pinnacle Ops","Pinnacle Ops","Gift of the Ley Lines","Techeun's Foresight"],"Exodus Down":["Nessus","Repurposed Charge","Emergency Electromagnet"],"Ferropotent":["Fireteam Ops","Solo","Solo/Fireteam Ops","Rapid Repair","Built From Scratch"],"First Ascent":["Pale Heart","Stack 'Em Up","Burn 'Em Down"],"Flain":["Sundered Doctrine","Knit Together","Sinew Stitching"],"Great Hunt":["Last Wish","Taken Armaments","Taken Barrier"],"Iron Battalion":["Iron Banner","Supercyclical","Primary Honing"],"Iron Panoply":["Iron Banner","Iron Conviction","Vigilant Watch"],"Kentarch 3":["Garden of Salvation","Garden of Salvation Reprises","Network Upload","Network Admin"],"Last Discipline":["Crucible","Power Loader","Terminal Velocity"],"Legacy's Oath":["Deep Stone Crypt","Augmented Servos","God-like Judgment"],"Luminopotent":["Fireteam Ops","Solo","Solo/Fireteam Ops","Shock and Clear","Ionic Overclock"],"Lustrous":["Solstice","Cauterize","Photogalvanic"],"New Demotic":["Trials","Trials of Osiris","Martingale","Paroli"],"Nezarec's Nightmare":["Root of Nightmare","Root of Nightmares","Dream-Devourer","Bad Dreams"],"Oryx's Memory":["King's Fall","Ascendant Escape","Iron Sharpens Iron"],"Pantheos Resplendent":["Pantheon","Pantheon Raids","Well Prepared","Down the Line"],"Per Audacia":["Competitive","Crucible","Primary Chain","Sublime Transit"],"Promised":["Salvation's Edge","Stable Resonance","Resonance Redirection"],"Resonant Fury":["Vow of the Disciple","Siphoning Touch","Resonant Plating"],"Reverie Dawn":["Dreaming City","A Wish for Protection","A Wish Fulfilled"],"Sage Protector":["Equilibrium","Combat Meditation","Blade Focus"],"Seventh Seraph":["Cosmodrome","Rasputin's Reprisal","Rasputin's Wrath"],"Shrewd Survivor":["Lawless Frontier","Hotshot","Reflex Action"],"Smoke Jumper":["Fireteam Ops","Lost Sectors","Solo","Ride Together, Die Together","Too Old for This"],"Spacewalk":["Vesper's Host","Augmented Explosives","Augmented Armaments"],"Swordmaster":["Pinnacle Ops","Xûr","Stesso Tempo","Balestra"],"TM Custom":["Spire of the Watcher","High Noon","Old Martian Diplomacy"],"Taken King":["Ghosts of the Deep","Lucent Swarm","The Ceremony"],"Techeun's Regalia":["Shattered Throne","Truth to Power","Queensfoil Rush"],"Techsec":["Fireteam Ops","Lost Sectors","Solo","Concussive Rounds","Wrecker"],"Thriving Survivor":["Lawless Frontier","Room Clearing","Opening Act"],"Thunderhead":["Neomuna","License to Thrill","Lethal Weave"],"Triumphal Anthem":["Crucible","Quickplay","Scoot to Loot","Shoot to Scoot"],"Twofold Crown":["Legacy Trials Vendor","Trials of Osiris","Crook and Flail","Gift of Sight"],"Uncaged Deviants":["Desert Perpetual","Epic","Superluminal Motion","Special Relativity"],"Veritas":["Throne World","Lucent Transmutation","Lucent Tithes"],"Wayward Psyche":["Desert Perpetual"],"Wild Anthem":["Crucible","Legacy Crucible Vendor","Fanfare","SUROS Harmony"],"Wildwood":["EDZ","Watchtower","Field Expertise"],"Yearning Echo":["Grasp of Avarice","Overflowing Coffers","Untold Greed"]};
-const CLASS_NUM = { titan: 0, hunter: 1, warlock: 2 };
 const ANY_SET = "*any*";
 const targetName = t => t.prefSet ? `${t.prefSet} (preferred)` : t.set === ANY_SET ? `${t.label && !["any", "none", "any set", "no set"].includes(norm(t.label)) ? t.label : "Any set"}` : t.set;
 const SLOT = { 3448274439: "Helmet", 3551918588: "Gauntlets", 14239492: "Chest", 20886954: "Legs", 1585787867: "Class Item" };
+const CLASS_ITEM = 1585787867;
+const SLOT_ORDER = [3448274439, 3551918588, 14239492, 20886954, 1585787867]; // helmet to class item, as the game shows them
+const SLOT_SHORT = { 3448274439: "Helm", 3551918588: "Arms", 14239492: "Chest", 20886954: "Legs", 1585787867: "Class" };
+const CLASS_ORDER = { 1: 0, 0: 1, 2: 2 }; // Hunter, Titan, Warlock, as the class columns are laid out
+const armorCopyKey = a => a.def.cls + "|" + norm(a.def.name); // copies of the same piece: same name and class
+
 
 /* Plug details (category, stats) for the plugs on your armor: from the item list when it has them, else looked up once and cached. */
 async function ensurePlugInfo(hashes) {
-  const key = "d2v_plugs_" + state.manifestVersion;
-  const cache = state.plugCache ||= (store.get(key) || {});
+  const cache = state.plugCache ||= loadCache("d2v_plugs");
   const missing = [...new Set(hashes)].filter(h => !state.plugInfo[h] && !(h in cache) && !failed.has("p" + h));
   if (missing.length) {
     log(`Looking up ${missing.length} armor plug definitions (once per game update)…`);
-    let i = 0;
-    await Promise.all(Array.from({ length: Math.min(6, missing.length) }, async () => {
-      while (i < missing.length) {
-        const h = missing[i++];
-        try {
-          const d = await bungie(`/Destiny2/Manifest/DestinyInventoryItemDefinition/${h}/`);
-          cache[h] = slimArmorPlug(d);
-        } catch (e) { failed.add("p" + h); }
-      }
-    }));
+    await eachLimited(missing, 6, async h => {
+      try { cache[h] = slimArmorPlug(await itemDef(h)); } catch { failed.add("p" + h); }
+    });
     const misses = missing.filter(h => failed.has("p" + h)).length;
     if (misses) log(`Couldn't read ${misses} armor plug definition${misses > 1 ? "s" : ""}; armor using them may show no archetype or stats until the next visit.`);
-    store.set(key, cache);
+    saveCache("d2v_plugs", cache);
   }
 }
 const slimArmorPlug = d => ({
@@ -934,7 +958,7 @@ const armorPlug = h => state.plugInfo[h] || state.plugCache?.[h] || null;
 async function loadSources() {
   if (state.sourceOf) return;
   log("Downloading Collections sources…");
-  const raw = await (await fetch(BUNGIE + state.manifestPaths.DestinyCollectibleDefinition)).json();
+  const raw = await manifestFile("DestinyCollectibleDefinition");
   // By collectible, by item hash and by item name (reissued copies have new hashes but the same name).
   state.sourceOf = {}; state.sourceByItem = {}; state.sourceByName = {};
   for (const [h, d] of Object.entries(raw)) {
@@ -956,7 +980,7 @@ const armorSource = a => state.sourceOf?.[a.def.coll] || state.sourceByItem?.[a.
 async function loadSets() {
   if (state.setOf) return;
   log("Downloading armor set definitions…");
-  const raw = await (await fetch(BUNGIE + state.manifestPaths.DestinyEquipableItemSetDefinition)).json();
+  const raw = await manifestFile("DestinyEquipableItemSetDefinition");
   const setOf = {};
   state.setNames = [];
   for (const d of Object.values(raw)) {
@@ -987,21 +1011,16 @@ function resolveSet(text, allowMany = false) {
 
 function readArmor() {
   const r = state.profileRaw;
-  const chars = r.characters?.data || {};
-  const CLASS_NAME = { 0: "Titan", 1: "Hunter", 2: "Warlock" };
   const sockets = r.itemComponents?.sockets?.data || {};
   const reusable = r.itemComponents?.reusablePlugs?.data || {};
   const out = [];
-  const add = (it, where) => {
+  for (const [it, where] of profileItems(r)) {
     const def = state.armorDefs[it.itemHash];
-    if (!def || !it.itemInstanceId || (def.tier !== TIER_LEGENDARY && def.tier !== 6)) return;
+    if (!def || !it.itemInstanceId || (def.tier !== TIER_LEGENDARY && def.tier !== TIER_EXOTIC)) continue;
     out.push({ id: it.itemInstanceId, hash: it.itemHash, def, where, locked: (it.state & 1) === 1,
       plugged: (sockets[it.itemInstanceId]?.sockets || []).map(s => s.plugHash || 0),
       reusable: reusable[it.itemInstanceId]?.plugs || {} });
-  };
-  for (const it of r.profileInventory?.data?.items || []) add(it, "Vault");
-  for (const [cid, inv] of Object.entries(r.characterInventories?.data || {})) for (const it of inv.items) add(it, CLASS_NAME[chars[cid]?.classType] || "Character");
-  for (const [cid, inv] of Object.entries(r.characterEquipment?.data || {})) for (const it of inv.items) add(it, (CLASS_NAME[chars[cid]?.classType] || "Character") + " (equipped)");
+  }
   return out;
 }
 
@@ -1029,12 +1048,7 @@ function describeArmor(a) {
 async function loadArmorList() {
   const url = $("armorUrl").value.trim() || ARMOR_CSV;
   if (!url) return null;
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
-  let text;
-  try { text = await (await fetch(url, { signal: ctl.signal, cache: "no-store" })).text(); }
-  finally { clearTimeout(timer); }
-  const rows = parseCSV(text);
+  const rows = parseCSV(await fetchText(url));
   const head = (rows[0] || []).map(norm);
   const col = (...names) => head.findIndex(h => names.some(n => h === norm(n)));
   // "Set Bonus" can name the set; if there are two "Set Bonus" columns, the second is the Y/N flag.
@@ -1206,68 +1220,76 @@ function solveGroup(targets, pieces, prefSets) {
   });
 }
 
-function knockout(armor, list) {
-  const opt = { unlisted: $("optArmorUnlisted").checked, locked: $("optArmorLocked").checked, oldRaid: $("optArmorOldRaid").checked };
-  const targets = [], problems = [];
-  const groups = {};
+/* Your armor list as builds: rows with the same class and set, five at a time. Set bonus = N rows make "any set" builds that
+   only prefer their set(s); "Crucible/Iron Banner/Trials" prefers any set from those. Rows that can't be read are logged. */
+function armorBuilds(list) {
+  const groups = {}, problems = [];
   for (const row of list) {
     const cls = CLASS_NUM[norm(row.cls)];
     if (cls == null) { problems.push(`unknown class "${row.cls}"`); continue; }
     if (row.setPreferred) {
-      // Set bonus = N: the set(s) are only a preference; stats come first and pieces may come from any set.
-      // "Crucible/Iron Banner/Trials" prefers any set from those.
       const names = [];
       for (const part of alts(row.set)) { const r = resolveSet(part, true); if (r.error) problems.push(r.error); else names.push(...(r.names || (r.name !== ANY_SET ? [r.name] : []))); }
-      const k = cls + "|pref|" + norm(row.set);
-      (groups[k] ||= { cls, set: ANY_SET, prefSets: new Set(names), prefSet: names.length ? row.set : null, label: row.set, rows: [] }).rows.push(row);
+      (groups[cls + "|pref|" + norm(row.set)] ||= { cls, set: ANY_SET, prefSets: new Set(names), prefSet: names.length ? row.set : null, label: row.set, rows: [] }).rows.push(row);
       continue;
     }
     const set = resolveSet(row.set);
     if (set.error) { problems.push(set.error); continue; }
-    const k = cls + "|" + set.name;
-    (groups[k] ||= { cls, set: set.name, prefSets: null, prefSet: null, label: row.set, rows: [] }).rows.push(row);
+    (groups[cls + "|" + set.name] ||= { cls, set: set.name, prefSets: null, prefSet: null, label: row.set, rows: [] }).rows.push(row);
   }
-  const groupList = Object.values(groups);
-  for (const g of groupList) { g.targets = []; for (let i = 0; i < g.rows.length; i += 5) { const t = { ...g, rows: g.rows.slice(i, i + 5), n: i / 5 + 1 }; delete t.targets; g.targets.push(t); targets.push(t); } }
   for (const p of [...new Set(problems)]) log("Armor list: " + p);
+  const groupList = Object.values(groups);
+  for (const g of groupList) {
+    g.targets = [];
+    for (let i = 0; i < g.rows.length; i += 5) { const t = { ...g, rows: g.rows.slice(i, i + 5), n: i / 5 + 1 }; delete t.targets; g.targets.push(t); }
+  }
+  return groupList;
+}
+
+/* Until you have an equippable, perfect 5-piece set, also keep spares: other pieces for a filled slot that fit some row
+   at least as well as the kept piece fits its row. Exact duplicates (same archetype, tertiary and tuning) aren't kept twice. */
+function keepSpares(t, pieces, kept) {
+  t.perfect = t.result.picks.length === 5 && t.result.picks.every(p => p.piece && !fitGaps(p.piece, p.row).length);
+  t.spares = 0;
+  if (t.perfect) return;
+  const sig = a => [norm(a.archetype), statKey(a.tertiary), statKey(a.tuning)].join("|");
+  for (const p of t.result.picks) {
+    if (!p.piece) continue;
+    const level = fitScore(p.piece, p.row);
+    const seen = new Set([sig(p.piece)]);
+    const others = pieces.filter(a => a.def.bucket === p.slot && !kept.has(a.id))
+      .map(a => ({ a, f: Math.max(...t.rows.map(r => fitScore(a, r))) }))
+      .filter(x => x.f >= level)
+      .sort((x, y) => y.f - x.f || y.a.total - x.a.total || (BigInt(x.a.id) < BigInt(y.a.id) ? -1 : 1));
+    for (const { a } of others) {
+      if (seen.has(sig(a))) continue;
+      seen.add(sig(a));
+      kept.set(a.id, t);
+      a.spare = true;
+      a.gaps = [];
+      t.spares++;
+    }
+  }
+}
+
+/* Marks every legendary armor piece kept (in a build, or a spare for one) or junk, with the reason. */
+function knockout(armor, list) {
+  const opt = { unlisted: $("optArmorUnlisted").checked, locked: $("optArmorLocked").checked, oldRaid: $("optArmorOldRaid").checked };
+  const groups = armorBuilds(list);
+  const targets = groups.flatMap(g => g.targets);
+  const anySetLast = (x, y) => (x.set === ANY_SET) - (y.set === ANY_SET);
+  const piecesFor = t => armor.filter(a => a.def.cls === t.cls && (t.set === ANY_SET || a.set === t.set));
   const kept = new Map();
   // Set-specific builds pick first, so an any-set build doesn't take pieces a set bonus needs.
-  groupList.sort((x, y) => (x.set === ANY_SET) - (y.set === ANY_SET));
-  for (const g of groupList) {
-    const pieces = armor.filter(a => a.def.cls === g.cls && (g.set === ANY_SET || a.set === g.set) && !kept.has(a.id));
-    const results = solveGroup(g.targets, pieces, g.prefSets);
+  for (const g of groups.sort(anySetLast)) {
+    const results = solveGroup(g.targets, piecesFor(g).filter(a => !kept.has(a.id)), g.prefSets);
     g.targets.forEach((t, i) => {
       t.result = results[i];
       for (const p of t.result.picks) if (p.piece) { kept.set(p.piece.id, t); p.piece.gaps = fitGaps(p.piece, p.row); p.piece.spare = false; }
     });
   }
-  for (const t of [...targets].sort((x, y) => (x.set === ANY_SET) - (y.set === ANY_SET))) {
-    const pieces = armor.filter(a => a.def.cls === t.cls && (t.set === ANY_SET || a.set === t.set));
-    // Until you have an equippable, perfect 5-piece set, also keep spares: other pieces for a filled slot that fit some row
-    // at least as well as the kept piece fits its row. Exact duplicates (same archetype, tertiary and tuning) aren't kept twice.
-    t.perfect = t.result.picks.length === 5 && t.result.picks.every(p => p.piece && !fitGaps(p.piece, p.row).length);
-    t.spares = 0;
-    if (!t.perfect) {
-      const sig = a => [norm(a.archetype), statKey(a.tertiary), statKey(a.tuning)].join("|");
-      for (const p of t.result.picks) {
-        if (!p.piece) continue;
-        const level = fitScore(p.piece, p.row);
-        const seen = new Set([sig(p.piece)]);
-        const alts = pieces.filter(a => a.def.bucket === p.slot && !kept.has(a.id))
-          .map(a => ({ a, f: Math.max(...t.rows.map(r => fitScore(a, r))) }))
-          .filter(x => x.f >= level)
-          .sort((x, y) => y.f - x.f || y.a.total - x.a.total || (BigInt(x.a.id) < BigInt(y.a.id) ? -1 : 1));
-        for (const { a } of alts) {
-          if (seen.has(sig(a))) continue;
-          seen.add(sig(a));
-          kept.set(a.id, t);
-          a.spare = true;
-          a.gaps = [];
-          t.spares++;
-        }
-      }
-    }
-  }
+  for (const t of [...targets].sort(anySetLast)) keepSpares(t, piecesFor(t), kept);
+  // Sets on your list, by class: a piece from one of them that isn't kept is junk even when unlisted armor is kept.
   const targetSets = new Map();
   for (const t of targets) {
     for (const set of t.prefSets ? [...t.prefSets] : t.set !== ANY_SET ? [t.set] : []) if (!targetSets.has(t.cls + "|" + set)) targetSets.set(t.cls + "|" + set, targetName(t));
@@ -1283,7 +1305,7 @@ function knockout(armor, list) {
     }
     const listed = targetSets.get(a.def.cls + "|" + a.set);
     a.junk = listed ? true : opt.unlisted;
-    a.why = listed ? "not needed for your " + listed + " set" : (a.set ? `${["Titan", "Hunter", "Warlock"][a.def.cls] || ""} ${a.set} isn't on your list`.trim() : "not part of a set");
+    a.why = listed ? "not needed for your " + listed + " set" : (a.set ? `${CLASS_NAMES[a.def.cls] || ""} ${a.set} isn't on your list`.trim() : "not part of a set");
     if (!a.archetype) a.why += " · no archetype (old armor)";
     if (a.junk && opt.locked && a.locked) { a.junk = false; a.why += " · kept: locked"; }
     if (a.junk && opt.oldRaid && a.oldRaid) { a.junk = false; a.why += " · kept: old raid armor"; }
@@ -1296,92 +1318,73 @@ function renderArmor() {
   const all = state.armorResults || [];
   $("armorResults").hidden = false;
   const junk = all.filter(a => a.junk);
-  $("armorStats").innerHTML = "";
-  for (const [k, v] of [["Legendary armor", all.filter(a => a.def.tier !== 6).length], ["Exotic armor", all.filter(a => a.def.tier === 6).length], ["Junk", junk.length], ["Kept for sets", all.filter(a => !a.junk && /^in your/.test(a.why)).length]]) {
-    const d = document.createElement("div"); d.innerHTML = `<b>${v}</b> <span class="muted">${k}</span>`; $("armorStats").append(d);
-  }
-  $("armorQuery").value = junk.length ? `-tag:keep (${junk.map(a => "id:" + a.id).join(" OR ")})` : "";
-
-  const SLOT_ORDER = [3448274439, 3551918588, 14239492, 20886954, 1585787867];
-  const SLOT_SHORT = { 3448274439: "Helm", 3551918588: "Arms", 14239492: "Chest", 20886954: "Legs", 1585787867: "Class" };
-  const wantText = row => [row.archetype || "any archetype", row.tertiary && `${row.tertiary} tertiary`, row.tuning && `${row.tuning} tuning`].filter(Boolean).join(" · ");
-  for (const c of [0, 1, 2]) $("armorCol" + c).innerHTML = "";
-  for (const t of state.armorTargets || []) {
-    const picks = t.result.picks;
-    const perfect = picks.filter(p => p.piece && !fitGaps(p.piece, p.row).length).length;
-    const have = picks.filter(p => p.piece).length;
-    const box = document.createElement("div");
-    box.className = "target";
-    const head = document.createElement("div");
-    head.className = "target-head";
-    const title = document.createElement("b");
-    title.textContent = targetName(t) + (t.n > 1 ? " #" + t.n : "");
-    const counts = document.createElement("span");
-    counts.className = "counts";
-    counts.innerHTML = `<span class="good" title="Perfect">${perfect}/${picks.length}</span> &nbsp;<span class="warn" title="Perfect + partial">${have}/${picks.length}</span>`;
-    head.append(title, counts);
-    box.append(head);
-    // Slots in order; unfilled rows go to the empty slots. Details are in each icon's hover text.
-    const bySlot = Object.fromEntries(picks.filter(p => p.piece).map(p => [p.slot, p]));
-    const missingRows = picks.filter(p => !p.piece).map(p => p.row);
-    const has = a => [a.archetype || "no archetype", `${a.tertiary || "no"} tertiary`, `${a.tuning || "no"} tuning`].join(" · ");
-    const tiles = document.createElement("div");
-    tiles.className = "slots";
-    for (const s of SLOT_ORDER) {
-      const p = bySlot[s];
-      const tile = document.createElement("div");
-      if (p) {
-        const gaps = fitGaps(p.piece, p.row);
-        tile.className = "slot " + (gaps.length ? "part" : "ok");
-        const img = document.createElement("img");
-        img.src = BUNGIE + p.piece.def.icon; img.alt = "";
-        tile.append(img);
-        tile.title = gaps.length
-          ? `${SLOT[s]}\nShould have: ${wantText(p.row)}\nActually has: ${has(p.piece)}`
-          : `${SLOT[s]}: ${has(p.piece)}`;
-      } else {
-        const row = missingRows.shift();
-        if (!row) continue; // fewer than 5 rows on the list
-        tile.className = "slot miss";
-        tile.innerHTML = `<span class="lbl">${SLOT_SHORT[s]}</span>`;
-        tile.title = `${SLOT[s]}\nShould have: ${wantText(row)}\nActually has: nothing`;
-      }
-      tiles.append(tile);
-    }
-    box.append(tiles);
-    if (t.spares) counts.title = `Perfect / perfect + partial · ${t.spares} spare${t.spares > 1 ? "s" : ""} kept until this set is perfect`;
-    $("armorCol" + t.cls).append(box);
-  }
+  renderStats($("armorStats"), [
+    ["Legendary armor", all.filter(a => a.def.tier !== TIER_EXOTIC).length],
+    ["Exotic armor", all.filter(a => a.def.tier === TIER_EXOTIC).length],
+    ["Junk", junk.length],
+    ["Kept for sets", all.filter(a => !a.junk && /^in your/.test(a.why)).length],
+  ]);
+  $("armorQuery").value = dimSearch(junk);
+  for (const c of [0, 1, 2]) $("armorCol" + c).replaceChildren();
+  for (const t of state.armorTargets || []) $("armorCol" + t.cls).append(targetBox(t));
 
   const f = norm($("armorFilter").value || "");
   let rows = state.armorView === "junk" ? junk : state.armorView === "keep" ? all.filter(a => !a.junk) : all;
-  if (f) rows = rows.filter(a => norm(a.def.name + " " + a.set).includes(f));
-  const CLASS_ORDER = { 1: 0, 0: 1, 2: 2 };
+  // Clicking a piece's name shows every copy of it, whatever the tab.
+  if (state.armorOnly) rows = all.filter(a => armorCopyKey(a) === state.armorOnly);
+  else if (f) rows = rows.filter(a => norm(a.def.name + " " + a.set).includes(f));
+  $("armorOnlyChip").hidden = !state.armorOnly;
+  if (state.armorOnly) $("armorOnlyName").textContent = `Copies of ${rows[0] ? rows[0].def.name : "this piece"}`;
   rows = rows.slice().sort((x, y) => (CLASS_ORDER[x.def.cls] - CLASS_ORDER[y.def.cls]) || x.set.localeCompare(y.set) || (SLOT_ORDER.indexOf(x.def.bucket) - SLOT_ORDER.indexOf(y.def.bucket)));
-  const tb = $("armorRows");
-  tb.innerHTML = "";
-  for (const a of rows) {
-    const tr = document.createElement("tr");
-    const tdI = document.createElement("td");
-    if (a.def.icon) {
-      const img = document.createElement("img"); img.src = BUNGIE + a.def.icon; img.alt = "";
-      img.className = a.junk ? "st-junk" : (a.gaps && a.gaps.length ? "st-part" : "st-ok");
-      tdI.append(img);
+  $("armorRows").replaceChildren(...rows.map(armorRow));
+}
+
+/* One set on your list: its five slots (green perfect, yellow partial, red missing; details in each tile's hover text). */
+function targetBox(t) {
+  const picks = t.result.picks;
+  const perfect = picks.filter(p => p.piece && !fitGaps(p.piece, p.row).length).length;
+  const have = picks.filter(p => p.piece).length;
+  const counts = el("span", { className: "counts" },
+    el("span", { className: "good", title: "Perfect", textContent: `${perfect}/${picks.length}` }), "  ",
+    el("span", { className: "warn", title: "Perfect + partial", textContent: `${have}/${picks.length}` }));
+  if (t.spares) counts.title = `Perfect / perfect + partial · ${t.spares} spare${t.spares > 1 ? "s" : ""} kept until this set is perfect`;
+  const head = el("div", { className: "target-head" }, el("b", { textContent: targetName(t) + (t.n > 1 ? " #" + t.n : "") }), counts);
+  const wantText = row => [row.archetype || "any archetype", row.tertiary && `${row.tertiary} tertiary`, row.tuning && `${row.tuning} tuning`].filter(Boolean).join(" · ");
+  const hasText = a => [a.archetype || "no archetype", `${a.tertiary || "no"} tertiary`, `${a.tuning || "no"} tuning`].join(" · ");
+  // Slots in order; unfilled rows go to the empty slots.
+  const bySlot = Object.fromEntries(picks.filter(p => p.piece).map(p => [p.slot, p]));
+  const missingRows = picks.filter(p => !p.piece).map(p => p.row);
+  const tiles = el("div", { className: "slots" });
+  for (const s of SLOT_ORDER) {
+    const p = bySlot[s];
+    if (p) {
+      const gaps = fitGaps(p.piece, p.row);
+      tiles.append(el("div", {
+        className: "slot " + (gaps.length ? "part" : "ok"),
+        title: gaps.length ? `${SLOT[s]}\nShould have: ${wantText(p.row)}\nActually has: ${hasText(p.piece)}` : `${SLOT[s]}: ${hasText(p.piece)}`,
+      }, icon(p.piece.def.icon)));
+    } else {
+      const row = missingRows.shift();
+      if (!row) continue; // fewer than 5 rows on the list
+      tiles.append(el("div", { className: "slot miss", title: `${SLOT[s]}\nShould have: ${wantText(row)}\nActually has: nothing` },
+        el("span", { className: "lbl", textContent: SLOT_SHORT[s] })));
     }
-    const tdN = document.createElement("td");
-    tdN.textContent = a.def.name;
-    if (a.def.tier === 6) tdN.style.color = "var(--accent)";
-    if (a.locked) tdN.append(Object.assign(document.createElement("span"), { className: "tag", textContent: "locked" }));
-    const sub = document.createElement("div");
-    sub.className = a.junk ? "bad" : "muted";
-    sub.textContent = (a.junk ? "Junk — " : "") + a.why;
-    tdN.append(sub);
-    const tdD = document.createElement("td"); tdD.className = "perks";
-    tdD.textContent = [["Titan", "Hunter", "Warlock"][a.def.cls], SLOT[a.def.bucket], a.def.tier === 6 ? "exotic" : (a.set || (a.oldRaid ? "old raid armor" : "no set")), a.archetype || "no archetype", a.tertiary && a.tertiary + " tertiary", a.tuning && a.tuning + " tuning"].filter(Boolean).join(" · ");
-    const tdW = document.createElement("td"); tdW.className = "muted"; tdW.textContent = a.where;
-    tr.append(tdI, tdN, tdD, tdW);
-    tb.append(tr);
   }
+  return el("div", { className: "target" }, head, tiles);
+}
+
+function armorRow(a) {
+  const tdI = el("td");
+  if (a.def.icon) tdI.append(icon(a.def.icon, { className: a.junk ? "st-junk" : (a.gaps && a.gaps.length ? "st-part" : "st-ok") }));
+  const nm = el("span", { className: "wname", textContent: a.def.name, title: "Click to show only this piece's copies; click again to show everything" });
+  nm.onclick = () => { state.armorOnly = state.armorOnly === armorCopyKey(a) ? null : armorCopyKey(a); renderArmor(); };
+  const tdN = el("td", {}, nm);
+  if (a.def.tier === TIER_EXOTIC) tdN.style.color = "var(--accent)";
+  if (a.locked) tdN.append(tag("locked"));
+  tdN.append(el("div", { className: a.junk ? "bad" : "muted", textContent: (a.junk ? "Junk — " : "") + a.why }));
+  const details = [CLASS_NAMES[a.def.cls], SLOT[a.def.bucket], a.def.tier === TIER_EXOTIC ? "exotic" : (a.set || (a.oldRaid ? "old raid armor" : "no set")),
+    a.archetype || "no archetype", a.tertiary && a.tertiary + " tertiary", a.tuning && a.tuning + " tuning"].filter(Boolean).join(" · ");
+  return el("tr", {}, tdI, tdN, el("td", { className: "perks", textContent: details }), el("td", { className: "muted", textContent: a.where }));
 }
 
 
@@ -1390,14 +1393,8 @@ function renderArmor() {
    archetype matches > tertiary isn't Health (unless asked for) > tertiary matches; ties go to the higher base stat total,
    then the oldest. Exotics not on the list, and single copies, are never junk. Tuning doesn't matter here.
    Exotic class items are left alone: their two random exotic perks make every copy different. */
-const CLASS_ITEM = 1585787867;
 async function loadExoticList() {
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
-  let text;
-  try { text = await (await fetch(EXOTIC_CSV, { signal: ctl.signal, cache: "no-store" })).text(); }
-  finally { clearTimeout(timer); }
-  const rows = parseCSV(text);
+  const rows = parseCSV(await fetchText(EXOTIC_CSV));
   const head = (rows[0] || []).map(norm);
   const col = (...names) => head.findIndex(h => names.some(n => h === norm(n)));
   const c = { name: col("Exotic", "Name"), arch: col("Archetype"), ter: col("Tertiary") };
@@ -1441,42 +1438,6 @@ function judgeExotics(exotics, list) {
   return exotics;
 }
 
-async function scanArmor() {
-  store.set("d2v_armor_url", $("armorUrl").value.trim());
-  const list = await loadArmorList();
-  if (!list) { $("armorNote").hidden = false; return; }
-  $("armorNote").hidden = true;
-  await loadSets();
-  let allArmor;
-  if (state.source === "vault") {
-    allArmor = readArmor();
-    await ensurePlugInfo(allArmor.flatMap(a => a.plugged).filter(Boolean));
-    allArmor.forEach(describeArmor);
-    try {
-      await loadSources();
-      for (const a of allArmor) if (a.def.tier === TIER_LEGENDARY) { a.source = armorSource(a); a.oldRaid = !a.archetype && isRaidSource(a.source); }
-    } catch (e) { log("Couldn't read armor sources: " + e.message); }
-  } else {
-    if (!csvText.armor) { log("Load a DIM armor export to check armor."); return; }
-    allArmor = armorFromCSV(csvText.armor);
-  }
-  const armor = allArmor.filter(a => a.def.tier === TIER_LEGENDARY);
-  const exotics = allArmor.filter(a => a.def.tier === 6);
-  log(`Armor: ${armor.filter(a => a.oldRaid).length} old raid pieces.`);
-  const n = armor.filter(a => a.archetype).length;
-  log(`Armor: ${armor.length} legendary pieces, ${n} with an archetype, ${armor.filter(a => a.tertiary).length} with a tertiary stat, ${armor.filter(a => a.tuning).length} with tuning, ${armor.filter(a => a.set).length} in a set.`);
-  state.armorList = list;
-  knockout(armor, list);
-  try { state.exoticList = await loadExoticList(); } catch (e) { log("Exotic list error: " + e.message); state.exoticList = {}; }
-  judgeExotics(exotics, state.exoticList);
-  log(`Exotics: ${exotics.length} pieces, ${exotics.filter(a => a.junk).length} junk.`);
-  state.armorResults = [...armor, ...exotics];
-  log(`Armor: ${state.armorResults.filter(a => a.junk).length} junk.`);
-  renderArmor();
-}
-
-
-
 /* ==================== LIST EDITOR (dev) ====================
    Pick a weapon, click its perks in order of importance, save. The ranking is the list row: pick 1 = Priority 1, and so on,
    so scoring is unchanged. Saved in this browser (localStorage "d2v_mylist"); can be exported as a CSV in the sheet's format. */
@@ -1487,7 +1448,7 @@ function edNamesIndex() {
   const idx = {};
   for (const [h, d] of Object.entries(state.defs || {})) if (d.tier === TIER_LEGENDARY && d.name && d.name !== "?") (idx[d.name] ||= []).push(Number(h));
   state.edIndex = idx;
-  $("edNames").replaceChildren(...Object.keys(idx).sort().map(n => Object.assign(document.createElement("option"), { value: n })));
+  $("edNames").replaceChildren(...Object.keys(idx).sort().map(n => el("option", { value: n })));
   return idx;
 }
 
@@ -1540,7 +1501,7 @@ function edPickRoll(i) {
 function edRollControls() {
   const n = ed.rolls.length, sel = $("edRoll");
   sel.hidden = n < 2;
-  sel.innerHTML = "";
+  sel.replaceChildren();
   ed.rolls.forEach((_, i) => sel.append(new Option(`Roll ${i + 1} of ${n}`, i, false, i === ed.roll)));
   $("edSave").hidden = !n;
   $("edSave").textContent = `Overwrite roll ${ed.roll + 1}`;
@@ -1569,11 +1530,10 @@ async function edLoadPool() {
    Saved once per batch of lookups, not after each one. */
 let metaSaveTimer = null;
 async function weaponMeta(hash) {
-  const key = "d2v_wmeta4_" + state.manifestVersion;
-  const cache = state.weaponMetaCache ||= (store.get(key) || {});
+  const cache = state.weaponMetaCache ||= loadCache("d2v_wmeta4");
   if (!(hash in cache) && !failed.has("m" + hash)) {
     try {
-      const d = await bungie(`/Destiny2/Manifest/DestinyInventoryItemDefinition/${hash}/`);
+      const d = await itemDef(hash);
       const frameHash = (d.sockets?.socketEntries || [])[0]?.singleInitialItemHash;
       let season = 0;
       if (d.seasonHash) {
@@ -1595,39 +1555,47 @@ async function weaponMeta(hash) {
         frame: frameHash ? (state.plugNames[frameHash] || "") : "",
       };
       clearTimeout(metaSaveTimer);
-      metaSaveTimer = setTimeout(() => store.set(key, cache), 300);
+      metaSaveTimer = setTimeout(() => saveCache("d2v_wmeta4", cache), 300);
     } catch (e) { failed.add("m" + hash); }
   }
   return cache[hash] || {};
 }
 
 function edRender() {
-  const map = nameToPlug();
-  const cols = poolColumns(ed.hash);
   const d = { ...(state.defs?.[ed.hash] || {}), ...(state.weaponMetaCache?.[ed.hash] || {}) };
+  edRenderHead(d);
+  edRenderVersions();
+  const hero = $("edHero");
+  hero.hidden = !d.shot;
+  hero.replaceChildren(...(d.shot ? [icon(d.shot)] : []));
+  edRenderPerks();
+  const rank = $("edRank");
+  if (ed.picks.length) rank.replaceChildren(...ed.picks.map((n, i) => el("span", { textContent: `${i + 1}. ${n}` })));
+  else { const none = el("span", { className: "muted", textContent: "No perks picked yet." }); none.setAttribute("style", "border:none"); rank.replaceChildren(none); }
+}
+
+/* Icon, name, and slot / element / type / ammo / frame as chips. */
+const EL_COLOR = { Arc: "#7ac8f5", Solar: "#f2913d", Void: "#b48cf0", Stasis: "#5c8cf0", Strand: "#4fd08a", Kinetic: "#d8d8d8" };
+function edRenderHead(d) {
   const head = $("edHead");
   head.hidden = false;
-  head.innerHTML = "";
-  if (d.icon) head.append(Object.assign(document.createElement("img"), { src: BUNGIE + d.icon, alt: "" }));
-  const txt = document.createElement("div");
-  txt.append(Object.assign(document.createElement("div"), { className: "nm", textContent: ed.name }));
-  // Slot, element, type, ammo and frame (archetype), as chips.
-  const chips = document.createElement("div"); chips.className = "chips";
-  const EL_COLOR = { Arc: "#7ac8f5", Solar: "#f2913d", Void: "#b48cf0", Stasis: "#5c8cf0", Strand: "#4fd08a", Kinetic: "#d8d8d8" };
+  const chips = el("div", { className: "chips" });
   for (const [label, val] of [["Slot", d.slot], ["Element", d.element], ["Type", d.type], ["Ammo", d.ammo], ["Frame", d.frame]]) {
     if (!val) continue;
-    const c = document.createElement("span"); c.className = "chip"; c.title = label;
-    if (label === "Element") c.innerHTML = `<i style="background:${EL_COLOR[val] || "#ccc"}"></i>`;
+    const c = el("span", { className: "chip", title: label });
+    if (label === "Element") { const dot = el("i"); dot.setAttribute("style", `background:${EL_COLOR[val] || "#ccc"}`); c.append(dot); }
     c.append(val);
     chips.append(c);
   }
-  txt.append(chips);
-  head.append(txt);
-  // All versions, in their own box (like destiny.report).
+  head.replaceChildren(...(d.icon ? [icon(d.icon)] : []), el("div", {}, el("div", { className: "nm", textContent: ed.name }), chips));
+}
+
+/* All versions of the weapon in their own box (like destiny.report), each with what sets it apart from the others. */
+function edRenderVersions() {
   const vb = $("edVersions");
+  const versions = ed.versions || [];
   const owned = new Set((state.results || []).map(w => w.hash));
-  vb.hidden = !(ed.versions && ed.versions.length > 1);
-  vb.innerHTML = "<h4>All versions</h4>";
+  vb.hidden = versions.length < 2;
   // What tells same-named versions apart: element, frame, ammo, slot, origin trait, or how many perks it can roll.
   const facts = h => {
     const m = state.weaponMetaCache?.[h] || {}, cols = poolColumns(h);
@@ -1638,82 +1606,72 @@ function edRender() {
       perks: cols.filter(c => c !== origin).reduce((sum, c) => sum + c.names.length, 0) + " perks",
     };
   };
-  const all = (ed.versions || []).map(facts);
+  const all = versions.map(facts);
   const differs = all.length > 1 ? Object.keys(all[0]).filter(k => new Set(all.map(f => f[k])).size > 1) : [];
-  (ed.versions || []).forEach((h, vi) => {
+  vb.replaceChildren(el("h4", { textContent: "All versions" }), ...versions.map((h, vi) => {
     const vd = state.defs?.[h] || {}, vm = state.weaponMetaCache?.[h] || {};
-    const row = document.createElement("div");
-    row.className = "vrow" + (h === ed.hash ? " on" : "");
-    row.innerHTML = `${vd.icon ? `<img src="${BUNGIE + vd.icon}" alt="">` : ""}<span class="vn"></span>${owned.has(h) ? '<span class="own" title="You own this version">●</span>' : ""}${vm.season ? `<span class="ss">S${vm.season}</span>` : vm.watermark ? `<img class="wm" src="${BUNGIE + vm.watermark}" alt="" title="Season watermark">` : ""}`;
-    row.querySelector(".vn").textContent = vd.name || "?";
-    const sub = differs.length ? differs.map(k => all[vi][k]).filter(Boolean).join(" · ") : `item ${h}`;
-    if (all.length > 1) row.querySelector(".vn").append(Object.assign(document.createElement("div"), { className: "vsub", textContent: sub }));
+    const name = el("span", { className: "vn", textContent: vd.name || "?" });
+    if (all.length > 1) name.append(el("div", { className: "vsub", textContent: differs.length ? differs.map(k => all[vi][k]).filter(Boolean).join(" · ") : `item ${h}` }));
+    const row = el("div", { className: "vrow" + (h === ed.hash ? " on" : "") }, ...(vd.icon ? [icon(vd.icon)] : []), name);
+    if (owned.has(h)) row.append(el("span", { className: "own", title: "You own this version", textContent: "●" }));
+    if (vm.season) row.append(el("span", { className: "ss", textContent: "S" + vm.season }));
+    else if (vm.watermark) row.append(el("img", { className: "wm", src: BUNGIE + vm.watermark, alt: "", title: "Season watermark" }));
     row.onclick = () => { if (h !== ed.hash) { ed.hash = h; busy(edLoadPool); } };
-    vb.append(row);
-  });
-  const hero = $("edHero");
-  hero.hidden = !d.shot;
-  hero.innerHTML = d.shot ? `<img src="${BUNGIE + d.shot}" alt="">` : "";
+    return row;
+  }));
+}
+
+/* The perk columns to click. Within a column the highest-priority pick is green, the next yellow, any others orange. */
+function edRenderPerks() {
+  const map = nameToPlug();
+  const cols = poolColumns(ed.hash);
   const box = $("edPerks");
-  box.innerHTML = "";
   if (!cols.length) { box.textContent = "Couldn't read this weapon's perks."; return; }
-  for (const c of cols) {
-    const col = document.createElement("div"); col.className = "edcol";
-    col.append(Object.assign(document.createElement("h4"), { textContent: c.label }));
-    // Within a column: the highest-priority pick is green, the next yellow, any others orange.
+  box.replaceChildren(...cols.map(c => {
     const colPicks = c.names.map(n => ed.picks.findIndex(x => norm(x) === n)).filter(r => r >= 0).sort((a, b) => a - b);
-    for (const n of c.names) {
+    return el("div", { className: "edcol" }, el("h4", { textContent: c.label }), ...c.names.map(n => {
       const h = map[n], display = state.plugNames[h] || n;
-      const rank = ed.picks.findIndex(x => norm(x) === n);
-      const o = document.createElement("div");
-      const place = colPicks.indexOf(rank);
-      o.className = "edopt" + (rank >= 0 ? " picked" + (place === 1 ? " p2" : place >= 2 ? " p3" : "") : "");
-      o.title = display;
-      if (state.plugIcons[h]) { const img = document.createElement("img"); img.src = BUNGIE + state.plugIcons[h]; img.alt = display; o.append(img); }
-      else o.append(Object.assign(document.createElement("span"), { className: "ph", textContent: display.split(" ").map(w => w[0]).join("").slice(0, 3) }));
-      if (rank >= 0) o.append(Object.assign(document.createElement("span"), { className: "badge", textContent: rank + 1 }));
-      o.onclick = e => {
-        const i = ed.picks.findIndex(x => norm(x) === n);
-        // Shift-click: move up one place. Alt-click: move down one place. Plain click: pick / unpick.
-        if (i >= 0 && (e.shiftKey || e.altKey)) {
-          e.preventDefault();
-          const j = e.shiftKey ? i - 1 : i + 1;
-          if (j >= 0 && j < ed.picks.length) [ed.picks[i], ed.picks[j]] = [ed.picks[j], ed.picks[i]];
-          edRender();
-          return;
-        }
-        if (i >= 0) ed.picks.splice(i, 1);
-        else if (ed.picks.length < 11) ed.picks.push(display);
-        else { log("A weapon can have at most 11 ranked perks."); return; }
-        edRender();
-      };
-      col.append(o);
-    }
-    box.append(col);
-  }
-  $("edRank").innerHTML = ed.picks.length ? "" : '<span class="muted" style="border:none">No perks picked yet.</span>';
-  ed.picks.forEach((n, i) => $("edRank").append(Object.assign(document.createElement("span"), { textContent: `${i + 1}. ${n}` })));
+      const rank = ed.picks.findIndex(x => norm(x) === n), place = colPicks.indexOf(rank);
+      const o = el("div", { className: "edopt" + (rank >= 0 ? " picked" + (place === 1 ? " p2" : place >= 2 ? " p3" : "") : ""), title: display });
+      if (state.plugIcons[h]) o.append(el("img", { src: BUNGIE + state.plugIcons[h], alt: display }));
+      else o.append(el("span", { className: "ph", textContent: display.split(" ").map(w => w[0]).join("").slice(0, 3) }));
+      if (rank >= 0) o.append(el("span", { className: "badge", textContent: rank + 1 }));
+      o.onclick = e => edClickPerk(e, n, display);
+      return o;
+    }));
+  }));
+}
+
+/* Plain click: pick / unpick. Shift-click: move a pick up one place. Alt-click: move it down one place. */
+function edClickPerk(e, n, display) {
+  const i = ed.picks.findIndex(x => norm(x) === n);
+  if (i >= 0 && (e.shiftKey || e.altKey)) {
+    e.preventDefault();
+    const j = e.shiftKey ? i - 1 : i + 1;
+    if (j >= 0 && j < ed.picks.length) [ed.picks[i], ed.picks[j]] = [ed.picks[j], ed.picks[i]];
+  } else if (i >= 0) ed.picks.splice(i, 1);
+  else if (ed.picks.length < 11) ed.picks.push(display);
+  else { log("A weapon can have at most 11 ranked perks."); return; }
+  edRender();
 }
 
 function edRenderList() {
   const mine = myList();
   const names = Object.values(mine).map(e => e.name).sort();
   $("edCount").textContent = names.length ? `· ${names.length} weapon${names.length === 1 ? "" : "s"}` : "· empty";
-  $("edList").innerHTML = "";
-  for (const n of names) {
-    const d = document.createElement("div");
-    const nm = Object.assign(document.createElement("span"), { className: "nm", textContent: (r => `${n} — ${r.length > 1 ? r.length + " rolls" : (r[0] || []).filter(Boolean).length + " perks"}`)(rollsOf(mine[norm(n)])) });
+  $("edList").replaceChildren(...names.map(n => {
+    const r = rollsOf(mine[norm(n)]);
+    const nm = el("span", { className: "nm", textContent: `${n} — ${r.length > 1 ? r.length + " rolls" : (r[0] || []).filter(Boolean).length + " perks"}` });
     nm.onclick = () => { $("edSearch").value = n; busy(() => edOpen(n)); };
-    const x = Object.assign(document.createElement("button"), { className: "xbtn", textContent: "×", title: "Remove from my list" });
+    const x = el("button", { className: "xbtn", textContent: "×", title: "Remove from my list" });
     armedButton(x, "Delete?", () => {
       const m = myList();
       delete m[norm(n)];
       edSaveList(m);
       log(`Removed ${n} from your list.`);
     });
-    d.append(x, nm);
-    $("edList").append(d);
-  }
+    return el("div", {}, x, nm);
+  }));
 }
 
 /* Click once to arm (the button turns red for a few seconds), click again within that window to confirm, like deleting a loadout in DIM. */
@@ -1785,10 +1743,7 @@ function wireEditor() {
     const q = v => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
     const lines = ["Weapon," + Array.from({ length: 11 }, (_, k) => "Priority " + (k + 1)).join(",")];
     for (const e of Object.values(mine).sort((a, b) => a.name.localeCompare(b.name))) for (const p of rollsOf(e)) lines.push([e.name, ...pad11(p)].map(v => q(v || "")).join(","));
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-    a.download = "weapon-list.csv";
-    a.click();
+    el("a", { href: URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })), download: "weapon-list.csv" }).click();
   };
   armedButton($("edWipe"), "Click again to delete everything", () => { edSaveList({}); log("Your list was deleted."); }, 4000);
   const saved = store.get("d2v_useMine");
@@ -1798,7 +1753,41 @@ function wireEditor() {
 }
 
 /* ==================== DIM EXPORT INPUT (dev) ==================== */
+/* The exports' text, remembered in this browser (d2v_dev_weapons / d2v_dev_armor) when it fits. */
 const csvText = { weapons: null, armor: null };
+function wireExportInput() {
+  for (const kind of ["weapons", "armor"]) {
+    const saved = (() => { try { return localStorage.getItem("d2v_dev_" + kind); } catch { return null; } })();
+    if (saved) csvText[kind] = saved;
+    const input = $(kind === "weapons" ? "fileWeapons" : "fileArmor");
+    input.onchange = async () => {
+      const f = input.files[0];
+      if (!f) return;
+      csvText[kind] = await f.text();
+      try { localStorage.setItem("d2v_dev_" + kind, csvText[kind]); } catch { log(`The ${kind} export is too big to remember; load it again next time.`); }
+      fileStatus();
+      setSource("export");
+    };
+  }
+  $("srcVault").onchange = () => setSource("vault");
+  $("srcExport").onchange = () => setSource("export");
+  fileStatus();
+}
+/* Where the scan reads from: "vault" or "export". */
+function setSource(src, rescan = true) {
+  state.source = src;
+  $("srcVault").checked = src === "vault";
+  $("srcExport").checked = src === "export";
+  $("exportBox").hidden = src !== "export";
+  $("fileStatus").hidden = src !== "export";
+  $("account").textContent = src === "vault" ? (state.membership?.name || "My vault") : "DIM export";
+  if (rescan && (src === "export" ? csvText.weapons : state.token)) busy(scan);
+}
+function fileStatus() {
+  const n = t => (t ? Math.max(0, parseCSV(t).length - 1) : 0);
+  $("fileStatus").textContent = `Weapons: ${csvText.weapons ? n(csvText.weapons) + " rows" : "not loaded"} · Armor: ${csvText.armor ? n(csvText.armor) + " rows" : "not loaded"}. In DIM: Settings → Spreadsheets → Weapons / Armor.`;
+}
+
 const unq = v => String(v ?? "").replace(/^"+|"+$/g, "").trim();
 
 function rowsAsObjects(text) {
@@ -1811,24 +1800,6 @@ function rowsAsObjects(text) {
   });
 }
 const truthy = v => /^(true|yes|1)$/i.test(String(v || "").trim());
-
-/* Name -> plug hash, for icons and types of perks the export lists by name. */
-function nameToPlug() {
-  if (state.nameHash) return state.nameHash;
-  const out = {};
-  for (const [h, t] of Object.entries(state.plugTypes || {})) {
-    if (!PERK_TYPE.test(t) || NOT_PERK_TYPE.test(t)) continue;
-    const n = norm(state.plugNames[h] || "");
-    if (n && !out[n]) out[n] = Number(h);
-  }
-  // Second pass: plugs with type names we don't recognize (new weapon types), if not mods, shaders and the like.
-  for (const [h, t] of Object.entries(state.plugTypes || {})) {
-    if (NOT_PERK_TYPE.test(t)) continue;
-    const n = norm(state.plugNames[h] || "");
-    if (n && !out[n]) out[n] = Number(h);
-  }
-  return (state.nameHash = out);
-}
 
 function weaponsFromCSV(text) {
   const out = [];
@@ -1895,8 +1866,6 @@ function buildSockets(w) {
 }
 
 const DIM_SLOT = [[/helmet|mask|hood|helm/i, 3448274439], [/gauntlet|glove|grip|wrap/i, 3551918588], [/chest|robe|vest|plate/i, 14239492], [/leg|boot|strides|greaves/i, 20886954], [/cloak|mark|bond|class/i, 1585787867]];
-const DIM_CLASS = { titan: 0, hunter: 1, warlock: 2 };
-const DIM_CLASS_NAME = { 0: "Titan", 1: "Hunter", 2: "Warlock" };
 const RAID_TAGS = /lastwish|gardenofsalvation|deepstonecrypt|vaultofglass|vowofthedisciple|kingsfall|rootofnightmares|crotasend|salvationsedge|desertperpetual|pantheon|leviathan|eaterofworlds|spireofstars|scourge|crownofsorrow|raid/i;
 const cap = v => { const t = String(v || "").trim(); return t ? t[0].toUpperCase() + t.slice(1) : ""; };
 
@@ -1904,13 +1873,13 @@ function armorFromCSV(text) {
   const out = [];
   for (const o of rowsAsObjects(text)) {
     const rarity = String(o.Rarity || "");
-    const tier = /exotic/i.test(rarity) ? 6 : /legendary/i.test(rarity) ? TIER_LEGENDARY : 0;
+    const tier = /exotic/i.test(rarity) ? TIER_EXOTIC : /legendary/i.test(rarity) ? TIER_LEGENDARY : 0;
     if (!tier) continue;
     const hash = Number(unq(o.Hash));
     const d = state.armorDefs?.[hash] || {};
     // Slot and class from the item definition; the export's Type and Equippable text only if the item isn't known.
     const bucket = SLOT[d.bucket] ? d.bucket : DIM_SLOT.find(([re]) => re.test(o.Type || ""))?.[1];
-    const cls = d.cls in DIM_CLASS_NAME ? d.cls : DIM_CLASS[norm(o.Equippable || "")];
+    const cls = CLASS_NAMES[d.cls] ? d.cls : CLASS_NUM[norm(o.Equippable || "")];
     if (!bucket || cls == null) continue;
     const a = {
       id: unq(o.Id), hash,
@@ -1927,7 +1896,7 @@ function armorFromCSV(text) {
   return out;
 }
 
-/* ---------- wiring ---------- */
+/* ==================== SCANNING ==================== */
 const BUSY = ["btnScan", "btnCopy", "btnCopyArmor"];
 async function busy(fn) {
   for (const id of BUSY) $(id).disabled = true;
@@ -1939,39 +1908,118 @@ async function scan() {
   store.set("d2v_tiered_url", $("tieredUrl").value.trim());
   const tiers = state.tiers = await loadTiered();
   await loadDefs();
+  const fromVault = state.source === "vault";
   let weapons;
-  if (state.source === "vault") {
+  if (fromVault) {
     if (!state.token) throw new Error("Not signed in. Sign in with Bungie first.");
     if (!state.membership) await loadMembership();
     log("Reading your vault…");
     weapons = await loadWeapons();
-    state.results = score(weapons, tiers);
-    try { await loadWeaponPools(weapons); } catch (e) { log("Couldn't read perk pools: " + e.message); }
   } else {
     if (!csvText.weapons) throw new Error("Load a DIM weapons export first.");
     log("Reading the DIM weapons export…");
     weapons = weaponsFromCSV(csvText.weapons);
-    state.results = score(weapons, tiers);
-    try { await loadWeaponPools(weapons); } catch (e) { log("Couldn't read perk pools: " + e.message); }
-    weapons.forEach(buildSockets);
   }
+  state.results = score(weapons, tiers);
+  // Perk pools are fetched for listed weapons only, so they come after scoring (which marks those).
+  try { await loadWeaponPools(weapons); } catch (e) { log("Couldn't read perk pools: " + e.message); }
+  if (!fromVault) weapons.forEach(buildSockets); // the export's flat perk list, sorted into sockets by those pools
   perkPools(weapons);
   log(`Scored ${weapons.length} legendary weapons; ${weapons.filter(w => w.junk).length} junk.`);
   render();
   try { await scanArmor(); } catch (e) { log("Armor error: " + e.message); }
 }
 
+/* Your armor (legendary and exotic), described: from your vault, or from the DIM export in dev. Null if there's nothing to read. */
+async function readAllArmor() {
+  if (state.source !== "vault") {
+    if (!csvText.armor) { log("Load a DIM armor export to check armor."); return null; }
+    return armorFromCSV(csvText.armor);
+  }
+  const allArmor = readArmor();
+  await ensurePlugInfo(allArmor.flatMap(a => a.plugged).filter(Boolean));
+  allArmor.forEach(describeArmor);
+  // Old raid armor: from a raid (Collections source) and from before archetypes.
+  try {
+    await loadSources();
+    for (const a of allArmor) if (a.def.tier === TIER_LEGENDARY) { a.source = armorSource(a); a.oldRaid = !a.archetype && isRaidSource(a.source); }
+  } catch (e) { log("Couldn't read armor sources: " + e.message); }
+  return allArmor;
+}
+
+async function scanArmor() {
+  store.set("d2v_armor_url", $("armorUrl").value.trim());
+  const list = await loadArmorList();
+  if (!list) { $("armorNote").hidden = false; return; }
+  $("armorNote").hidden = true;
+  await loadSets();
+  const allArmor = await readAllArmor();
+  if (!allArmor) return;
+  const armor = allArmor.filter(a => a.def.tier === TIER_LEGENDARY);
+  const exotics = allArmor.filter(a => a.def.tier === TIER_EXOTIC);
+  const count = test => armor.filter(test).length;
+  log(`Armor: ${count(a => a.oldRaid)} old raid pieces.`);
+  log(`Armor: ${armor.length} legendary pieces, ${count(a => a.archetype)} with an archetype, ${count(a => a.tertiary)} with a tertiary stat, ${count(a => a.tuning)} with tuning, ${count(a => a.set)} in a set.`);
+  state.armorList = list;
+  knockout(armor, list);
+  try { state.exoticList = await loadExoticList(); } catch (e) { log("Exotic list error: " + e.message); state.exoticList = {}; }
+  judgeExotics(exotics, state.exoticList);
+  log(`Exotics: ${exotics.length} pieces, ${exotics.filter(a => a.junk).length} junk.`);
+  state.armorResults = [...armor, ...exotics];
+  log(`Armor: ${state.armorResults.filter(a => a.junk).length} junk.`);
+  renderArmor();
+}
+
+
+/* ==================== PAGE ==================== */
+/* Junk / Keeping / All buttons: tabs = [[buttonId, view], …]; set(view) records the choice and re-renders. */
+function wireTabs(tabs, set) {
+  for (const [id, view] of tabs) $(id).onclick = () => { for (const [b] of tabs) $(b).classList.toggle("on", b === id); set(view); };
+}
+function wireCopy(buttonId, textId, what) {
+  $(buttonId).onclick = async () => {
+    try { await navigator.clipboard.writeText($(textId).value); log(`${what} copied.`); }
+    catch { $(textId).select(); log("Clipboard blocked; text selected for manual copy."); }
+  };
+}
+/* Checkboxes remembered in this browser (as d2v_<id>); onChange runs after each change. */
+function wireOptions(ids, onChange) {
+  for (const id of ids) {
+    const saved = store.get("d2v_" + id);
+    if (saved != null) $(id).checked = saved;
+    $(id).onchange = () => { store.set("d2v_" + id, $(id).checked); onChange(); };
+  }
+}
+/* A list link from Settings; the built-in link is shown as empty. */
+const savedUrl = (key, builtIn) => (store.get(key) === builtIn ? "" : (store.get(key) || ""));
+
 function wire() {
   $("btnSignIn").onclick = signIn;
   $("btnSignOut").onclick = () => signOut(true);
   $("btnScan").onclick = () => busy(scan);
-  $("btnCopy").onclick = async () => {
-    try { await navigator.clipboard.writeText($("dimQuery").value); log("DIM search copied."); }
-    catch { $("dimQuery").select(); log("Clipboard blocked; text selected for manual copy."); }
+  wirePages();
+  wireWeaponPage();
+  wireArmorPage();
+  wireEditor();
+}
+
+function wirePages() {
+  const pages = { weapons: ["pageWeapons", "pageTabWeapons"], armor: ["pageArmor", "pageTabArmor"], editor: ["pageEditor", "pageTabEditor"] };
+  const page = p => {
+    for (const [k, [pageId, tabId]] of Object.entries(pages)) { $(pageId).hidden = k !== p; $(tabId).classList.toggle("on", k === p); }
+    if (p === "editor" && state.defs) edNamesIndex();
+    store.set("d2v_page", p);
   };
-  for (const [id, v] of [["tabJunk", "junk"], ["tabKeep", "keep"], ["tabAll", "all"]]) {
-    $(id).onclick = () => { state.view = v; for (const b of ["tabJunk", "tabKeep", "tabAll"]) $(b).classList.toggle("on", b === id); render(); };
-  }
+  $("pageTabWeapons").onclick = () => page("weapons");
+  $("pageTabArmor").onclick = () => page("armor");
+  $("pageTabEditor").onclick = () => { $("advMenu").open = false; page("editor"); };
+  const saved = store.get("d2v_page");
+  page(saved === "armor" || (saved === "editor" && DEV) ? saved : "weapons");
+}
+
+function wireWeaponPage() {
+  wireCopy("btnCopy", "dimQuery", "DIM search");
+  wireTabs([["tabJunk", "junk"], ["tabKeep", "keep"], ["tabAll", "all"]], v => { state.view = v; render(); });
   $("filter").oninput = () => { state.only = null; render(); };
   $("onlyClear").onclick = () => { state.only = null; render(); };
   for (const th of document.querySelectorAll("th[data-sort]")) th.onclick = () => {
@@ -1979,48 +2027,22 @@ function wire() {
     state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : 1 };
     render();
   };
-  for (const id of ["optUnlisted", "optCrafted", "optLocked"]) {
-    const saved = store.get("d2v_" + id);
-    if (saved != null) $(id).checked = saved;
-    $(id).onchange = () => { store.set("d2v_" + id, $(id).checked); if (state.results.length && state.tiers) { score(state.results, state.tiers); render(); } };
-  }
-  $("tieredUrl").value = store.get("d2v_tiered_url") === TIERED_CSV ? "" : (store.get("d2v_tiered_url") || "");
-  // Armor
-  $("armorUrl").value = store.get("d2v_armor_url") === ARMOR_CSV ? "" : (store.get("d2v_armor_url") || "");
-  if (ARMOR_CSV) $("armorUrl").placeholder = "Leave empty to use the built-in armor list";
-  const page = p => {
-    $("pageWeapons").hidden = p !== "weapons"; $("pageArmor").hidden = p !== "armor"; $("pageEditor").hidden = p !== "editor";
-    $("pageTabWeapons").classList.toggle("on", p === "weapons"); $("pageTabArmor").classList.toggle("on", p === "armor"); $("pageTabEditor").classList.toggle("on", p === "editor");
-    if (p === "editor" && state.defs) edNamesIndex();
-    store.set("d2v_page", p);
-  };
-  $("pageTabWeapons").onclick = () => page("weapons");
-  $("pageTabArmor").onclick = () => page("armor");
-  $("pageTabEditor").onclick = () => { $("advMenu").open = false; page("editor"); };
-  wireEditor();
-  const saved = store.get("d2v_page");
-  page(saved === "armor" || (saved === "editor" && DEV) ? saved : "weapons");
-  state.armorView = "junk";
-  for (const [id, v] of [["armorTabJunk", "junk"], ["armorTabKeep", "keep"], ["armorTabAll", "all"]]) {
-    $(id).onclick = () => { state.armorView = v; for (const b of ["armorTabJunk", "armorTabKeep", "armorTabAll"]) $(b).classList.toggle("on", b === id); renderArmor(); };
-  }
-  $("armorFilter").oninput = () => renderArmor();
-  $("btnCopyArmor").onclick = async () => {
-    try { await navigator.clipboard.writeText($("armorQuery").value); log("Armor DIM search copied."); }
-    catch { $("armorQuery").select(); log("Clipboard blocked; text selected for manual copy."); }
-  };
-  for (const id of ["optArmorUnlisted", "optArmorLocked", "optArmorOldRaid"]) {
-    const saved = store.get("d2v_" + id);
-    if (saved != null) $(id).checked = saved;
-    $(id).onchange = () => {
-      store.set("d2v_" + id, $(id).checked);
-      if (state.armorResults && state.armorList) {
-        knockout(state.armorResults.filter(a => a.def.tier !== 6), state.armorList);
-        judgeExotics(state.armorResults.filter(a => a.def.tier === 6), state.exoticList || {});
-        renderArmor();
-      }
-    };
-  }
+  wireOptions(["optUnlisted", "optCrafted", "optLocked"], () => { if (state.results.length && state.tiers) { score(state.results, state.tiers); render(); } });
+  $("tieredUrl").value = savedUrl("d2v_tiered_url", TIERED_CSV);
+}
+
+function wireArmorPage() {
+  wireCopy("btnCopyArmor", "armorQuery", "Armor DIM search");
+  wireTabs([["armorTabJunk", "junk"], ["armorTabKeep", "keep"], ["armorTabAll", "all"]], v => { state.armorView = v; renderArmor(); });
+  $("armorFilter").oninput = () => { state.armorOnly = null; renderArmor(); };
+  $("armorOnlyClear").onclick = () => { state.armorOnly = null; renderArmor(); };
+  wireOptions(["optArmorUnlisted", "optArmorLocked", "optArmorOldRaid"], () => {
+    if (!state.armorResults || !state.armorList) return;
+    knockout(state.armorResults.filter(a => a.def.tier !== TIER_EXOTIC), state.armorList);
+    judgeExotics(state.armorResults.filter(a => a.def.tier === TIER_EXOTIC), state.exoticList || {});
+    renderArmor();
+  });
+  $("armorUrl").value = savedUrl("d2v_armor_url", ARMOR_CSV);
 }
 
 async function init() {
@@ -2043,39 +2065,10 @@ async function init() {
   }
   // Dev: your vault (if signed in) or a DIM export.
   $("app").hidden = false;
-  for (const kind of ["weapons", "armor"]) {
-    const saved = (() => { try { return localStorage.getItem("d2v_dev_" + kind); } catch { return null; } })();
-    if (saved) csvText[kind] = saved;
-    const input = $(kind === "weapons" ? "fileWeapons" : "fileArmor");
-    input.onchange = async () => {
-      const f = input.files[0];
-      if (!f) return;
-      csvText[kind] = await f.text();
-      try { localStorage.setItem("d2v_dev_" + kind, csvText[kind]); } catch { log(`The ${kind} export is too big to remember; load it again next time.`); }
-      fileStatus();
-      setSource("export");
-    };
-  }
-  fileStatus();
+  wireExportInput();
   // Default to your vault when signed in; otherwise the last export, if any.
   setSource(state.token ? "vault" : (csvText.weapons ? "export" : "vault"), false);
-  $("srcVault").onchange = () => setSource("vault");
-  $("srcExport").onchange = () => setSource("export");
   if (state.token || csvText.weapons) await busy(scan);
-}
-
-function setSource(src, rescan = true) {
-  state.source = src;
-  $("srcVault").checked = src === "vault";
-  $("srcExport").checked = src === "export";
-  $("exportBox").hidden = src !== "export";
-  $("fileStatus").hidden = src !== "export";
-  $("account").textContent = src === "vault" ? (state.membership?.name || "My vault") : "DIM export";
-  if (rescan && (src === "export" ? csvText.weapons : state.token)) busy(scan);
-}
-function fileStatus() {
-  const n = t => (t ? Math.max(0, parseCSV(t).length - 1) : 0);
-  $("fileStatus").textContent = `Weapons: ${csvText.weapons ? n(csvText.weapons) + " rows" : "not loaded"} · Armor: ${csvText.armor ? n(csvText.armor) + " rows" : "not loaded"}. In DIM: Settings → Spreadsheets → Weapons / Armor.`;
 }
 
 init();
