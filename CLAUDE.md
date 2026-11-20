@@ -40,7 +40,15 @@ A Destiny 2 vault cleaner: it scores your legendary weapons and armor against yo
 - The sign-in redirect URL is `vault.html`. Public clients get a 1-hour token with no refresh token.
 - Game data comes from the manifest: the light item definitions, plug sets, equipable item sets and collectibles are downloaded once per session. Full item definitions are fetched one at a time and cached per manifest version.
 
-## Data sources (published Google Sheets CSVs, constants near the top of the armor and weapon sections)
+## Data sources
+
+The lists live in Google Sheets. `.github/workflows/sync-lists.yml` copies the published tabs into `data/` daily (09:17 UTC) and on demand (Actions → Sync lists → Run workflow), committing only when something changed.
+- A tab that fails to download, or comes back as a web page instead of CSV, keeps its old file and marks the run failed.
+- vault.html reads `data/*.csv` (`LISTS`, `fetchList`). If a file is missing it falls back to the sheet's published link, and a link entered in Settings overrides both.
+- The tab ids (gids) live in both the workflow and `LISTS`, so keep them in step.
+- GitHub turns off scheduled workflows after 60 days without repo activity; running it once by hand turns it back on.
+
+The lists (constants near the top of the script):
 
 - **Weapon list** `TIERED_CSV` (gid 1453679621): `Weapon, Priority 1..11`. One row per wanted roll; a weapon may have several rows (e.g. PvE and PvP).
 - **Armor list** `ARMOR_CSV` (gid 1186443884): `Class, Set, Archetype, Tertiary, Tuning`, with an optional Set Bonus Y/N column. A field may list alternatives ("Melee/Grenade"); a blank field means any.
@@ -98,4 +106,4 @@ There are no automated tests in the repo. Before handing back a change:
 
 ## Deploying
 
-Commit `vault.html` to the default branch; GitHub Pages serves it. The owner usually uploads files through the GitHub web UI.
+Commit `vault.html` to the default branch; GitHub Pages serves it, along with `data/`. The owner usually uploads files through the GitHub web UI.
