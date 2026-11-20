@@ -286,7 +286,6 @@
         <label><input type="checkbox" id="optArmorLocked"> Never mark locked armor as junk</label>
         <label><input type="checkbox" id="optArmorOldRaid" checked> Never mark old raid armor as junk</label>
       </div>
-      <div id="armorNote" class="muted" style="margin-top:8px" hidden>Add your armor list link to check armor.</div>
     </div>
 
     <div class="card" id="armorResults" hidden>
@@ -321,7 +320,7 @@
       <h2>Settings</h2>
       <div class="settings">
         <label for="farmUrl">Farming list CSV <span class="muted">(optional)</span></label>
-        <input type="text" id="farmUrl" placeholder="Leave empty to use the built-in list (the sheet's Worth Farming tab: activity and reason per weapon)">
+        <input type="text" id="farmUrl" placeholder="Leave empty to use the built-in list (the sheet's Worth Farming tab: the activity for each weapon)">
       </div>
     </div>
     <div class="card" id="farmResults" hidden>
@@ -329,7 +328,7 @@
       <div class="acts" id="farmActs"></div>
       <h2>Weapons <span class="muted" style="text-transform:none;letter-spacing:0">· worst score first</span></h2>
       <div class="tabs">
-        <input type="text" id="farmFilter" class="filter" placeholder="Filter by weapon, activity or reason">
+        <input type="text" id="farmFilter" class="filter" placeholder="Filter by weapon or activity">
         <span id="farmOnlyChip" class="only" hidden><span id="farmOnlyName"></span><button id="farmOnlyClear" title="All activities">×</button></span>
       </div>
       <table>
@@ -365,16 +364,24 @@ const DEV = (() => {
     return sessionStorage.getItem("d2v_dev") === "1";
   } catch { return q != null && q !== "0"; }
 })();
-/* Your lists, published to the web as CSV. The weapon and armor links are used unless a different one is entered in Settings.
+/* Your lists. The page reads the copies in this repo's data/ folder, which a GitHub Action (.github/workflows/sync-lists.yml)
+   refreshes from the published sheet daily or on demand. If a copy is missing it falls back to the sheet itself, and a link
+   entered in Settings overrides both. Keep these links in step with the workflow's.
    Weapon list: Weapon, Priority 1–11. Armor list: Class, Set, Archetype, Tertiary, Tuning. Exotic list: Class, Exotic, Archetype, Tertiary.
-   Farming list (the Worth Farming tab): Source, Item, Why; its other columns are worked out here instead. */
+   Farming list (the Worth Farming tab): only Source and Item are used, for each weapon's activity. */
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 const EXOTIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=133060317&single=true&output=csv";
 const ARMOR_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1186443884&single=true&output=csv";
 const FARM_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1626558071&single=true&output=csv";
+const LISTS = {
+  weapons: { file: "data/weapon-list.csv", sheet: TIERED_CSV },
+  armor: { file: "data/armor-list.csv", sheet: ARMOR_CSV },
+  exotics: { file: "data/exotic-list.csv", sheet: EXOTIC_CSV },
+  farming: { file: "data/farming-list.csv", sheet: FARM_CSV },
+};
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-20 01:00";
+const BUILD = "2026-11-20 01:30";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_ARMOR = 2, ITEMTYPE_WEAPON = 3;
@@ -435,8 +442,21 @@ function log(msg) {
 async function fetchText(url) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 15000);
-  try { return await (await fetch(url, { signal: ctl.signal, cache: "no-store" })).text(); }
-  finally { clearTimeout(timer); }
+  try {
+    const res = await fetch(url, { signal: ctl.signal, cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
+  } finally { clearTimeout(timer); }
+}
+/* One of your lists (see LISTS): the link from Settings if one is entered, else the repo's copy, else the sheet itself. */
+async function fetchList(name, override = "") {
+  if (override) return fetchText(override);
+  const { file, sheet } = LISTS[name];
+  try { return await fetchText(file); }
+  catch (e) {
+    log(`${file} isn't available (${e.message}); reading the sheet directly. Run the "Sync lists" action on GitHub to create it.`);
+    return fetchText(sheet);
+  }
 }
 /* Rows of cells; quoted cells may hold commas, quotes ("") and line breaks. */
 function parseCSV(text) {
@@ -650,7 +670,7 @@ const rollsOf = e => (e?.rolls || (e?.prio ? [e.prio] : [])).filter(p => p.some(
 const pad11 = picks => Array.from({ length: 11 }, (_, k) => picks[k] || "");
 
 async function loadTiered() {
-  const rows = parseCSV(await fetchText($("tieredUrl").value.trim() || TIERED_CSV));
+  const rows = parseCSV(await fetchList("weapons", $("tieredUrl").value.trim()));
   const head = (rows[0] || []).map(norm);
   const col = name => head.indexOf(norm(name));
   const wi = col("Weapon");
@@ -1087,9 +1107,7 @@ function describeArmor(a) {
 }
 
 async function loadArmorList() {
-  const url = $("armorUrl").value.trim() || ARMOR_CSV;
-  if (!url) return null;
-  const rows = parseCSV(await fetchText(url));
+  const rows = parseCSV(await fetchList("armor", $("armorUrl").value.trim()));
   const head = (rows[0] || []).map(norm);
   const col = (...names) => head.findIndex(h => names.some(n => h === norm(n)));
   // "Set Bonus" can name the set; if there are two "Set Bonus" columns, the second is the Y/N flag.
@@ -1435,7 +1453,7 @@ function armorRow(a) {
    then the oldest. Exotics not on the list, and single copies, are never junk. Tuning doesn't matter here.
    Exotic class items are left alone: their two random exotic perks make every copy different. */
 async function loadExoticList() {
-  const rows = parseCSV(await fetchText(EXOTIC_CSV));
+  const rows = parseCSV(await fetchList("exotics"));
   const head = (rows[0] || []).map(norm);
   const col = (...names) => head.findIndex(h => names.some(n => h === norm(n)));
   const c = { name: col("Exotic", "Name"), arch: col("Archetype"), ter: col("Tertiary") };
@@ -1940,32 +1958,32 @@ function armorFromCSV(text) {
 /* ==================== FARMING ====================
    Every weapon on your weapon list (Tiered Weapons) against your vault: how close your best copy is to the best roll, so you can
    (A) pick an activity and see what there you most need, or (B) look down the worst scores and pick where to go.
-   The weapon list decides what's worth farming; the Worth Farming tab only supplies each weapon's activity and reason
+   The weapon list decides what's worth farming; the Worth Farming tab only supplies each weapon's activity (its Source)
    (anything there that isn't on the weapon list, armor included, is ignored).
    Score = your best copy's points / the most possible on that row of your weapon list. A weapon with several rolls
    (e.g. PvE and PvP) shows the roll you're furthest from. */
 async function loadFarmList() {
-  const rows = parseCSV(await fetchText($("farmUrl").value.trim() || FARM_CSV));
+  const rows = parseCSV(await fetchList("farming", $("farmUrl").value.trim()));
   const head = (rows[0] || []).map(norm);
   const col = name => head.indexOf(norm(name));
-  const c = { src: col("Source"), item: col("Item"), why: col("Why") };
-  if (c.src < 0 || c.item < 0) throw new Error("The farming CSV needs Source and Item columns (plus Why).");
+  const c = { src: col("Source"), item: col("Item") };
+  if (c.src < 0 || c.item < 0) throw new Error("The farming CSV needs Source and Item columns.");
   const list = [];
   for (const r of rows.slice(1)) {
     const item = (r[c.item] || "").trim();
-    if (item) list.push({ source: (r[c.src] || "").trim() || "Unknown", item, why: c.why >= 0 ? (r[c.why] || "").trim() : "" });
+    if (item) list.push({ source: (r[c.src] || "").trim() || "Unknown", item });
   }
   log(`Farming list loaded (${list.length} items).`);
   return list;
 }
 
-/* Score every weapon on your weapon list (state.tiers) from the scanned weapons (state.results). Activity and reason come
+/* Score every weapon on your weapon list (state.tiers) from the scanned weapons (state.results). The activity comes
    from the farming list (its first row for the weapon); a weapon it doesn't have goes under NO_ACTIVITY. */
 const NO_ACTIVITY = "Not on Worth Farming";
 function farmScores(farmList) {
   const info = {};
   for (const f of farmList) info[norm(baseName(f.item))] ||= f;
-  const list = Object.entries(state.tiers || {}).map(([k, rows]) => ({ source: info[k]?.source || NO_ACTIVITY, item: rows[0].name, why: info[k]?.why || "" }));
+  const list = Object.entries(state.tiers || {}).map(([k, rows]) => ({ source: info[k]?.source || NO_ACTIVITY, item: rows[0].name }));
   const copies = {};
   for (const w of state.results) (copies[norm(baseName(w.def.name))] ||= []).push(w);
   const iconOf = farmIcons();
@@ -2019,7 +2037,7 @@ function renderFarming() {
   let rows = visible;
   if (state.farmSource) rows = rows.filter(f => f.source === state.farmSource);
   const q = norm($("farmFilter").value || "");
-  if (q) rows = rows.filter(f => norm(`${f.item} ${f.source} ${f.why}`).includes(q));
+  if (q) rows = rows.filter(f => norm(`${f.item} ${f.source}`).includes(q));
   $("farmOnlyChip").hidden = !state.farmSource;
   if (state.farmSource) $("farmOnlyName").textContent = state.farmSource;
   rows = rows.slice().sort((x, y) => x.score - y.score || x.item.localeCompare(y.item));
@@ -2035,7 +2053,7 @@ function farmRow(f) {
     nm.title = "Click to see your copies on the Weapons page";
     nm.onclick = () => { state.only = f.key; $("filter").value = ""; state.view = "all"; for (const b of ["tabJunk", "tabKeep", "tabAll"]) $(b).classList.toggle("on", b === "tabAll"); render(); showPage("weapons"); };
   }
-  const tdN = el("td", {}, nm, el("div", { className: "muted", textContent: f.why }));
+  const tdN = el("td", {}, nm);
   const none = f.source === NO_ACTIVITY;
   const src = el("span", { className: "farmsrc" + (none ? " muted" : ""), textContent: f.source, title: none ? "On your weapon list but not the Worth Farming tab: add it there to give it an activity" : "Show only this activity" });
   src.onclick = () => { state.farmSource = state.farmSource === f.source ? null : f.source; renderFarming(); };
@@ -2115,8 +2133,6 @@ async function readAllArmor() {
 async function scanArmor() {
   store.set("d2v_armor_url", $("armorUrl").value.trim());
   const list = await loadArmorList();
-  if (!list) { $("armorNote").hidden = false; return; }
-  $("armorNote").hidden = true;
   await loadSets();
   const allArmor = await readAllArmor();
   if (!allArmor) return;
