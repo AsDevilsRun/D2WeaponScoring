@@ -1,0 +1,69 @@
+# Copies the published list tabs from the Google Sheet into data/, so vault.html can read them from this site
+# (no cross-site loading) and every change to a list shows up in the repo's history.
+# Runs daily, and on demand from the Actions tab ("Sync lists" -> "Run workflow").
+# The tabs must be published to the web as CSV (File -> Share -> Publish to web). Keep these links in step with vault.html.
+name: Sync lists
+
+on:
+  schedule:
+    - cron: "17 9 * * *" # daily, 09:17 UTC (3:17 AM Central Standard Time)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-lists
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the lists
+        env:
+          SHEET: https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub
+        run: |
+          mkdir -p data
+          failed=0
+          # file name ; sheet tab id (gid) ; a column header the tab must have (grep pattern)
+          while IFS=';' read -r file gid needs; do
+            tmp=$(mktemp)
+            if ! curl -fsSL --retry 3 --max-time 60 "$SHEET?gid=$gid&single=true&output=csv" -o "$tmp"; then
+              echo "::error title=$file not updated::Couldn't download tab $gid. Is it published to the web? The old copy was kept."
+              failed=1; continue
+            fi
+            # An unpublished tab can come back as a web page instead of CSV; never let that replace a good list.
+            if head -c 300 "$tmp" | grep -qi '<html\|<!doctype' || ! head -n 1 "$tmp" | grep -qi "$needs"; then
+              echo "::error title=$file not updated::Tab $gid didn't come back as the expected CSV (no \"${needs//\\|/ or }\" column). The old copy was kept."
+              failed=1; continue
+            fi
+            mv "$tmp" "data/$file"
+            echo "data/$file: $(($(wc -l < "data/$file") - 1)) rows"
+          done <<'LISTS'
+          weapon-list.csv;1453679621;Weapon
+          armor-list.csv;1186443884;Class\|Character
+          exotic-list.csv;133060317;Exotic
+          farming-list.csv;1626558071;Item
+          LISTS
+          echo "failed=$failed" >> "$GITHUB_ENV"
+
+      - name: Commit any changes
+        run: |
+          git add data
+          if git diff --cached --quiet; then
+            echo "No list changed."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Sync lists from the sheet ($(git diff --cached --name-only | sed 's|data/||' | paste -sd, - | sed 's/,/, /g'))"
+            git push
+          fi
+
+      - name: Report lists that couldn't be updated
+        if: env.failed == '1'
+        run: |
+          echo "At least one list couldn't be downloaded; see the errors above. The others were updated."
+          exit 1
