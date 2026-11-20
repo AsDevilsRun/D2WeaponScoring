@@ -12,8 +12,9 @@ A Destiny 2 vault cleaner: it scores your legendary weapons and armor against yo
   - **BUNGIE:** `bungie()`, `itemDef`, `manifestFile`, `eachLimited`, `profileItems`, sign-in, `loadDefs`, `loadWeapons`.
   - **WEAPONS:** the list, perk columns and pools, scoring, and rendering (`render` → `weaponRow` → `perkGrid`).
   - **ARMOR:** set and plug data, fit scoring, `solveGroup`, `armorBuilds`/`keepSpares`/`knockout`, rendering (`renderArmor` → `targetBox`, `armorRow`), and exotics.
+  - **FARMING:** `loadFarmList`, `farmScores`, `renderFarming` → `farmRow`.
   - **LIST EDITOR** (dev) and **DIM EXPORT INPUT** (dev).
-  - **SCANNING:** `scan`, `readAllArmor`, `scanArmor`.
+  - **SCANNING:** `scan` (weapons, then `scanFarming`, then `scanArmor`), `readAllArmor`.
   - **PAGE:** the `wire*` functions and `init`.
 
 ## Rules for changes
@@ -44,6 +45,8 @@ A Destiny 2 vault cleaner: it scores your legendary weapons and armor against yo
 - **Weapon list** `TIERED_CSV` (gid 1453679621): `Weapon, Priority 1..11`. One row per wanted roll; a weapon may have several rows (e.g. PvE and PvP).
 - **Armor list** `ARMOR_CSV` (gid 1186443884): `Class, Set, Archetype, Tertiary, Tuning`, with an optional Set Bonus Y/N column. A field may list alternatives ("Melee/Grenade"); a blank field means any.
 - **Exotic list** `EXOTIC_CSV` (gid 133060317): `Class, Exotic, Archetype, Tertiary`.
+- **Farming list** `FARM_CSV` (gid 1626558071, the Worth Farming tab): only `Source, Item, Why` are read, to give each weapon its activity and reason. The weapon list decides what's worth farming: Worth Farming rows for anything not on it (armor sets, dropped weapons) are ignored. The tab's other columns (Have?, the unnamed TRUE/FALSE, Score) are worked out live instead.
+- `parseCSV` repairs text that went through the wrong encoding when pasted into Sheets ("Ir YÃ»t" becomes "Ir Yût", "HÃ¤kke" becomes "Häkke"); see `fixText`.
 - **DIM exports** (dev only): the Weapons and Armor CSVs from DIM's Settings → Spreadsheets. They rely on the columns `Perks N` (a `*` suffix marks the selected perk), `Id`, `Hash`, `Rarity`, `Crafted`, `Locked`, `Archetype`, `Tertiary Stat`, `Tuning Stat`, `Total (Base)` and `Source`.
 
 ## Scoring (intended behavior; don't "fix" it)
@@ -53,7 +56,7 @@ A Destiny 2 vault cleaner: it scores your legendary weapons and armor against yo
   - Perks are matched by name against every perk option on the copy, wherever its column. Copies with more options scoring higher is intended.
   - Each row keeps its best-scoring copy. Copies tied with identical scored perks keep only the oldest (lowest item ID); tied copies with different perks are all kept.
   - Adept, Timelost, Harrowed and Baroque copies count as the base weapon (`baseName`).
-  - Enhanced perks count as the base perk (`cleanPerk`).
+  - Enhanced perks count as the base perk (`cleanPerk`). DIM writes them as "X Enhanced"; perks really named "Enhanced Battery" or "Enhanced Heatsink" keep their names.
   - Options: weapons not on the list are junk; crafted and locked copies can be protected.
 - **Columns:** Priorities 1/3/5 are trait 1, 2/4/6 are trait 2, 7/8 are the magazine, 9/10 the barrel and 11 the origin trait (`PERK_COLS`). Columns are only used for the perk display.
 - **Armor:**
@@ -64,12 +67,19 @@ A Destiny 2 vault cleaner: it scores your legendary weapons and armor against yo
   - Spares are kept until a set is perfect.
   - Old raid armor (no archetype, raid source) can be protected.
 - **Exotics:** for each exotic on the list, only the best copy is kept. Exotic class items are never judged, because their random perks make every copy different.
+- **Farming page:**
+  - Use A: pick an activity, see what you most need there. Use B: read down the worst scores and pick where to go.
+  - Score = your best copy's points / the row's max. The max is the sum of the row's points, which is 90 when all 11 priorities are filled, matching the sheet's formula.
+  - A weapon with several rolls shows the roll you're furthest from (the minimum). This differs from the sheet, which uses one particular roll.
+  - Exactly the weapons on the weapon list are shown; one missing from Worth Farming goes under "Not on Worth Farming".
+  - Activity buttons are A–Z, each showing your worst score there. Items are sorted worst first.
+  - Clicking an item you own opens its copies on the Weapons page.
 - The DIM search is always `-tag:keep (id:… OR …)`.
 
 ## Browser storage (localStorage, about 5 MB per origin)
 
 - **Irreplaceable:** `d2v_mylist`.
-- **Settings:** `d2v_page`, `d2v_tiered_url`, `d2v_armor_url`, `d2v_excluded`, `d2v_useMine`, `d2v_opt*`.
+- **Settings:** `d2v_page`, `d2v_tiered_url`, `d2v_armor_url`, `d2v_farm_url`, `d2v_excluded`, `d2v_useMine`, `d2v_opt*`.
 - **Session:** `d2v_token`, `d2v_oauth_state`.
 - **Rebuildable** (cleared first when an important save doesn't fit):
   - the per-manifest caches `d2v_wpools_<v>`, `d2v_wperk_<v>`, `d2v_plugs_<v>` and `d2v_wmeta4_<v>`, pruned by `pruneCaches` when the version changes
