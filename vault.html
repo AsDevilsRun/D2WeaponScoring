@@ -139,6 +139,15 @@
   .slot.part { border-color:var(--warn); } .slot.part::after { background:rgba(224,181,74,.25); }
   .slot.miss { border-color:var(--bad); border-style:dashed; } .slot.miss::after { background:rgba(224,108,108,.12); }
   .slot .lbl { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--bad); font-weight:600; }
+  .acts { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  .act { font-size:12px; padding:3px 9px; border-radius:12px; border:1px solid var(--line); background:var(--bg); cursor:pointer; color:var(--text); }
+  .act:hover { border-color:var(--accent); }
+  .act.on { border-color:var(--accent); color:var(--accent); }
+  .act b { font-weight:700; margin-left:4px; }
+  .meter { display:inline-block; width:70px; height:6px; border-radius:3px; background:var(--line); vertical-align:middle; margin-right:8px; overflow:hidden; }
+  .meter i { display:block; height:100%; }
+  .farmsrc { cursor:pointer; }
+  .farmsrc:hover { color:var(--accent); }
   td img.st-junk { outline:2px solid var(--bad); } td img.st-part { outline:2px solid var(--warn); } td img.st-ok { outline:2px solid var(--good); }
 </style>
 </head>
@@ -183,6 +192,7 @@
     <div class="pagetabs">
       <button id="pageTabWeapons" class="on">Weapons</button>
       <button id="pageTabArmor">Armor</button>
+      <button id="pageTabFarming">Farming</button>
       <span style="flex:1"></span>
       <details class="adv devonly" id="advMenu">
         <summary>Advanced</summary>
@@ -306,6 +316,29 @@
     </div>
     </div>
 
+    <div id="pageFarming" hidden>
+    <div class="card">
+      <h2>Settings</h2>
+      <div class="settings">
+        <label for="farmUrl">Farming list CSV <span class="muted">(optional)</span></label>
+        <input type="text" id="farmUrl" placeholder="Leave empty to use the built-in list (the sheet's Worth Farming tab: activity and reason per weapon)">
+      </div>
+    </div>
+    <div class="card" id="farmResults" hidden>
+      <h2>Activities <span class="muted" style="text-transform:none;letter-spacing:0">· your worst score there · click one to see what to farm</span></h2>
+      <div class="acts" id="farmActs"></div>
+      <h2>Weapons <span class="muted" style="text-transform:none;letter-spacing:0">· worst score first</span></h2>
+      <div class="tabs">
+        <input type="text" id="farmFilter" class="filter" placeholder="Filter by weapon, activity or reason">
+        <span id="farmOnlyChip" class="only" hidden><span id="farmOnlyName"></span><button id="farmOnlyClear" title="All activities">×</button></span>
+      </div>
+      <table>
+        <thead><tr><th></th><th>Weapon</th><th>Activity</th><th title="Your best copy's points out of the most possible; for weapons with several rolls, the roll you're furthest from">Score</th><th>Copies</th></tr></thead>
+        <tbody id="farmRows"></tbody>
+      </table>
+    </div>
+    </div>
+
     <div class="card">
       <h2>Log</h2>
       <div id="log"></div>
@@ -333,13 +366,15 @@ const DEV = (() => {
   } catch { return q != null && q !== "0"; }
 })();
 /* Your lists, published to the web as CSV. The weapon and armor links are used unless a different one is entered in Settings.
-   Weapon list: Weapon, Priority 1–11. Armor list: Class, Set, Archetype, Tertiary, Tuning. Exotic list: Class, Exotic, Archetype, Tertiary. */
+   Weapon list: Weapon, Priority 1–11. Armor list: Class, Set, Archetype, Tertiary, Tuning. Exotic list: Class, Exotic, Archetype, Tertiary.
+   Farming list (the Worth Farming tab): Source, Item, Why; its other columns are worked out here instead. */
 const TIERED_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1453679621&single=true&output=csv";
 const EXOTIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=133060317&single=true&output=csv";
 const ARMOR_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1186443884&single=true&output=csv";
+const FARM_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSW6GlhKGfiRMD1PW1ljtsE4AREfRvU9qcLdVS2GDDCoUD18Il5fVxKLXHiDJDrNq7YoaE4dfzoz55s/pub?gid=1626558071&single=true&output=csv";
 
 /* Bump this with every change, so you can tell which version the browser is running. */
-const BUILD = "2026-11-17 21:30";
+const BUILD = "2026-11-20 01:00";
 const BUNGIE = "https://www.bungie.net";
 const API = BUNGIE + "/Platform";
 const ITEMTYPE_ARMOR = 2, ITEMTYPE_WEAPON = 3;
@@ -352,8 +387,12 @@ const state = { token: null, membership: null, defs: null, plugNames: null, resu
 /* ==================== HELPERS ==================== */
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const cleanPerk = n => String(n).replace(/\s*\(enhanced\)\s*$/i, "").replace(/\s+enhanced$/i, "").replace(/^enhanced\s+/i, "").trim();
-const norm = s => String(s).toLowerCase().replace(/[‘’`]/g, "'").replace(/\s+/g, " ").trim();
+/* Enhanced perks count as the base perk. DIM writes them as "Golden Tricorn Enhanced"; perks really named "Enhanced …"
+   (Enhanced Battery, Enhanced Heatsink) are their own perks and keep their name. */
+const cleanPerk = n => String(n).replace(/\s*\(enhanced\)\s*$/i, "").replace(/\s+enhanced$/i, "").trim();
+/* Text that went through the wrong encoding somewhere (a CSV pasted into Sheets): "Ir YÃ»t" is really "Ir Yût". */
+const fixText = s => (/[\u00C2-\u00DF][\u0080-\u00BF]/.test(s) ? (() => { try { return decodeURIComponent(escape(s)); } catch { return s; } })() : s);
+const norm = s => fixText(String(s)).toLowerCase().replace(/[‘’`]/g, "'").replace(/\s+/g, " ").trim();
 /* Small DOM helper: el("span", { className: "tag", textContent: "locked" }, ...children). */
 const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
 const CLASS_NAMES = ["Titan", "Hunter", "Warlock"]; // by Bungie's classType
@@ -414,7 +453,7 @@ function parseCSV(text) {
     else if (c !== "\r") cell += c;
   }
   if (cell || row.length) { row.push(cell); rows.push(row); }
-  return rows;
+  return rows.map(r => r.map(fixText));
 }
 
 /* Page bits shared by the weapon and armor pages. */
@@ -599,7 +638,9 @@ function tierRow(name, prio) {
     if (!pts.has(norm(p(k)))) pts.set(norm(p(k)), { perk: p(k), v });
     v--;
   }
-  return { name, pts, prio: Array.from({ length: 11 }, (_, k) => p(k)) };
+  // The most a copy can score on this row: every listed perk matched (90 when all 11 are filled, as in your sheet).
+  const max = [...pts.values()].reduce((sum, x) => sum + x.v, 0);
+  return { name, pts, prio: Array.from({ length: 11 }, (_, k) => p(k)), max };
 }
 /* Your list, kept in memory too, so an edit that couldn't be saved still counts (and downloads) until the page closes. */
 let myListMem = null;
@@ -1896,6 +1937,129 @@ function armorFromCSV(text) {
   return out;
 }
 
+/* ==================== FARMING ====================
+   Every weapon on your weapon list (Tiered Weapons) against your vault: how close your best copy is to the best roll, so you can
+   (A) pick an activity and see what there you most need, or (B) look down the worst scores and pick where to go.
+   The weapon list decides what's worth farming; the Worth Farming tab only supplies each weapon's activity and reason
+   (anything there that isn't on the weapon list, armor included, is ignored).
+   Score = your best copy's points / the most possible on that row of your weapon list. A weapon with several rolls
+   (e.g. PvE and PvP) shows the roll you're furthest from. */
+async function loadFarmList() {
+  const rows = parseCSV(await fetchText($("farmUrl").value.trim() || FARM_CSV));
+  const head = (rows[0] || []).map(norm);
+  const col = name => head.indexOf(norm(name));
+  const c = { src: col("Source"), item: col("Item"), why: col("Why") };
+  if (c.src < 0 || c.item < 0) throw new Error("The farming CSV needs Source and Item columns (plus Why).");
+  const list = [];
+  for (const r of rows.slice(1)) {
+    const item = (r[c.item] || "").trim();
+    if (item) list.push({ source: (r[c.src] || "").trim() || "Unknown", item, why: c.why >= 0 ? (r[c.why] || "").trim() : "" });
+  }
+  log(`Farming list loaded (${list.length} items).`);
+  return list;
+}
+
+/* Score every weapon on your weapon list (state.tiers) from the scanned weapons (state.results). Activity and reason come
+   from the farming list (its first row for the weapon); a weapon it doesn't have goes under NO_ACTIVITY. */
+const NO_ACTIVITY = "Not on Worth Farming";
+function farmScores(farmList) {
+  const info = {};
+  for (const f of farmList) info[norm(baseName(f.item))] ||= f;
+  const list = Object.entries(state.tiers || {}).map(([k, rows]) => ({ source: info[k]?.source || NO_ACTIVITY, item: rows[0].name, why: info[k]?.why || "" }));
+  const copies = {};
+  for (const w of state.results) (copies[norm(baseName(w.def.name))] ||= []).push(w);
+  const iconOf = farmIcons();
+  return list.map(f => {
+    const key = norm(baseName(f.item));
+    const rows = state.tiers?.[key];
+    const mine = copies[key] || [];
+    const out = { ...f, key, icon: iconOf[key] || "", copies: mine.length };
+    // Each roll: the best any copy scores on it.
+    out.rolls = rows.map((t, i) => {
+      const best = Math.max(0, ...mine.map(w => w.rowScores?.[i]?.sc ?? 0));
+      return { best, max: t.max, ratio: t.max ? best / t.max : 0 };
+    });
+    out.score = Math.min(...out.rolls.map(r => r.ratio));
+    return out;
+  });
+}
+/* Weapon icons by name: legendary first, then any tier (the list may name exotics). */
+function farmIcons() {
+  if (state.farmIconIndex) return state.farmIconIndex;
+  const idx = {};
+  for (const tierFirst of [true, false]) for (const d of Object.values(state.defs || {})) {
+    if (tierFirst && d.tier !== TIER_LEGENDARY) continue;
+    const k = norm(baseName(d.name));
+    if (d.icon && !idx[k]) idx[k] = d.icon;
+  }
+  return (state.farmIconIndex = idx);
+}
+
+const pct = x => Math.round(x * 100 + 1e-9) + "%"; // 0.825 shows as 83%, as in your sheet
+const scoreColor = x => (x >= 0.8 ? "var(--good)" : x >= 0.5 ? "var(--warn)" : "var(--bad)");
+
+function renderFarming() {
+  const items = state.farm || [];
+  $("farmResults").hidden = false;
+  const visible = items;
+  // Activities A–Z, so you can find the one you're about to play; each shows its worst score.
+  const acts = {};
+  for (const f of visible) {
+    const a = acts[f.source] ||= { name: f.source, n: 0, worst: null };
+    a.n++;
+    if (a.worst == null || f.score < a.worst) a.worst = f.score;
+  }
+  const actList = Object.values(acts).sort((x, y) => (x.name === NO_ACTIVITY) - (y.name === NO_ACTIVITY) || x.name.localeCompare(y.name));
+  $("farmActs").replaceChildren(...actList.map(a => {
+    const b = el("button", { className: "act" + (state.farmSource === a.name ? " on" : ""), title: `${a.n} weapon${a.n > 1 ? "s" : ""}` }, a.name, el("b", { textContent: pct(a.worst) }));
+    if (state.farmSource !== a.name) b.style.borderColor = scoreColor(a.worst);
+    b.onclick = () => { state.farmSource = state.farmSource === a.name ? null : a.name; renderFarming(); };
+    return b;
+  }));
+  let rows = visible;
+  if (state.farmSource) rows = rows.filter(f => f.source === state.farmSource);
+  const q = norm($("farmFilter").value || "");
+  if (q) rows = rows.filter(f => norm(`${f.item} ${f.source} ${f.why}`).includes(q));
+  $("farmOnlyChip").hidden = !state.farmSource;
+  if (state.farmSource) $("farmOnlyName").textContent = state.farmSource;
+  rows = rows.slice().sort((x, y) => x.score - y.score || x.item.localeCompare(y.item));
+  $("farmRows").replaceChildren(...rows.map(farmRow));
+}
+
+function farmRow(f) {
+  const tdI = el("td");
+  if (f.icon) tdI.append(icon(f.icon));
+  const nm = el("span", { textContent: f.item });
+  if (f.copies) {
+    nm.className = "wname";
+    nm.title = "Click to see your copies on the Weapons page";
+    nm.onclick = () => { state.only = f.key; $("filter").value = ""; state.view = "all"; for (const b of ["tabJunk", "tabKeep", "tabAll"]) $(b).classList.toggle("on", b === "tabAll"); render(); showPage("weapons"); };
+  }
+  const tdN = el("td", {}, nm, el("div", { className: "muted", textContent: f.why }));
+  const none = f.source === NO_ACTIVITY;
+  const src = el("span", { className: "farmsrc" + (none ? " muted" : ""), textContent: f.source, title: none ? "On your weapon list but not the Worth Farming tab: add it there to give it an activity" : "Show only this activity" });
+  src.onclick = () => { state.farmSource = state.farmSource === f.source ? null : f.source; renderFarming(); };
+  const tdS = el("td");
+  {
+    const bar = el("span", { className: "meter" }, el("i"));
+    bar.firstChild.style.width = pct(f.score);
+    bar.firstChild.style.background = scoreColor(f.score);
+    tdS.append(bar, el("b", { textContent: pct(f.score) }));
+    tdS.title = f.rolls.map((r, i) => `${f.rolls.length > 1 ? `Roll ${i + 1}: ` : ""}${r.best} of ${r.max} points (${pct(r.ratio)})`).join("\n");
+    if (f.rolls.length > 1) tdS.append(el("div", { className: "muted", style: "font-size:11px", textContent: f.rolls.map(r => pct(r.ratio)).join(" · ") }));
+  }
+  const tdC = el("td", { className: "muted", textContent: f.copies ? String(f.copies) : "none" });
+  return el("tr", {}, tdI, tdN, el("td", {}, src), tdS, tdC);
+}
+
+async function scanFarming() {
+  store.set("d2v_farm_url", $("farmUrl").value.trim());
+  state.farmList = await loadFarmList();
+  state.farm = farmScores(state.farmList);
+  renderFarming();
+}
+
+
 /* ==================== SCANNING ==================== */
 const BUSY = ["btnScan", "btnCopy", "btnCopyArmor"];
 async function busy(fn) {
@@ -1927,6 +2091,7 @@ async function scan() {
   perkPools(weapons);
   log(`Scored ${weapons.length} legendary weapons; ${weapons.filter(w => w.junk).length} junk.`);
   render();
+  try { await scanFarming(); } catch (e) { log("Farming list error: " + e.message); }
   try { await scanArmor(); } catch (e) { log("Armor error: " + e.message); }
 }
 
@@ -2000,21 +2165,29 @@ function wire() {
   wirePages();
   wireWeaponPage();
   wireArmorPage();
+  wireFarmingPage();
   wireEditor();
 }
 
+const PAGES = { weapons: ["pageWeapons", "pageTabWeapons"], armor: ["pageArmor", "pageTabArmor"], farming: ["pageFarming", "pageTabFarming"], editor: ["pageEditor", "pageTabEditor"] };
+function showPage(p) {
+  for (const [k, [pageId, tabId]] of Object.entries(PAGES)) { $(pageId).hidden = k !== p; $(tabId).classList.toggle("on", k === p); }
+  if (p === "editor" && state.defs) edNamesIndex();
+  store.set("d2v_page", p);
+}
 function wirePages() {
-  const pages = { weapons: ["pageWeapons", "pageTabWeapons"], armor: ["pageArmor", "pageTabArmor"], editor: ["pageEditor", "pageTabEditor"] };
-  const page = p => {
-    for (const [k, [pageId, tabId]] of Object.entries(pages)) { $(pageId).hidden = k !== p; $(tabId).classList.toggle("on", k === p); }
-    if (p === "editor" && state.defs) edNamesIndex();
-    store.set("d2v_page", p);
-  };
-  $("pageTabWeapons").onclick = () => page("weapons");
-  $("pageTabArmor").onclick = () => page("armor");
-  $("pageTabEditor").onclick = () => { $("advMenu").open = false; page("editor"); };
+  $("pageTabWeapons").onclick = () => showPage("weapons");
+  $("pageTabArmor").onclick = () => showPage("armor");
+  $("pageTabFarming").onclick = () => showPage("farming");
+  $("pageTabEditor").onclick = () => { $("advMenu").open = false; showPage("editor"); };
   const saved = store.get("d2v_page");
-  page(saved === "armor" || (saved === "editor" && DEV) ? saved : "weapons");
+  showPage(saved === "armor" || saved === "farming" || (saved === "editor" && DEV) ? saved : "weapons");
+}
+
+function wireFarmingPage() {
+  $("farmFilter").oninput = () => renderFarming();
+  $("farmOnlyClear").onclick = () => { state.farmSource = null; renderFarming(); };
+  $("farmUrl").value = savedUrl("d2v_farm_url", FARM_CSV);
 }
 
 function wireWeaponPage() {
